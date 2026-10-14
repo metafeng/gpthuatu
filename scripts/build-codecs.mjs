@@ -8,6 +8,7 @@ for (const name of ['pngjs', 'jpeg-js']) {
   const pkg = JSON.parse(await fs.readFile(`node_modules/${name}/package.json`, 'utf8'));
   const names = await fs.readdir(`node_modules/${name}`);
   const file = names.find(x => /^license(?:\.|$)/i.test(x));
-  licenses += `## ${name} ${pkg.version}\n\n${await fs.readFile(`node_modules/${name}/${file}`, 'utf8')}\n\n`;
+  const text = (await fs.readFile(`node_modules/${name}/${file}`, 'utf8')).split(/\r?\n/).map(line => line.trimEnd()).join('\n').trim();
+  licenses += `## ${name} ${pkg.version}\n\n${text}\n\n`;
 }
-await fs.writeFile('vendor/LICENSES.md', licenses);
+await fs.writeFile('vendor/LICENSES.md', licenses.trimEnd() + '\n');
