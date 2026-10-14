@@ -195,10 +195,12 @@ test('redaction removes keys, bearer headers and signed URLs from errors', () =>
 
 test('native transport sends literal bytes, handles chunking and enforces size/deadline', async t => {
   const seen = [];
+  let afterSubmission;
   const server = http.createServer((req, res) => {
     const chunks = []; req.on('data', x => chunks.push(x));
     req.on('end', () => {
       seen.push(Buffer.concat(chunks).toString());
+      if (req.url === '/cancel-after-send') { afterSubmission(); return; }
       if (req.url === '/wait') return setTimeout(() => res.end('late'), 60);
       res.setHeader('x-request-id', 'test-request-id'); res.write('abc'); res.end('def');
     });
@@ -210,7 +212,13 @@ test('native transport sends literal bytes, handles chunking and enforces size/d
   assert.equal(ok.body.toString(), 'abcdef'); assert.equal(seen[0], '@literal');
   assert.equal(ok.headers['x-request-id'], 'test-request-id');
   await assert.rejects(requestNode(base, { maxBytes: 3, env: {} }), { code: 'RESPONSE_TOO_LARGE' });
-  await assert.rejects(requestNode(base + '/wait', { method: 'POST', body: Buffer.from('sent'), timeout: 15, env: {} }), error => error.code === 'TIMEOUT' && error.submitted);
+  // A very short deadline can expire during connection setup on a busy runner.
+  await assert.rejects(requestNode(base + '/wait', { method: 'POST', body: Buffer.from('sent'), timeout: 15, env: {} }), { code: 'TIMEOUT' });
+  // Test post-submission classification deterministically, after the server receives the body.
+  const controller = new AbortController();
+  afterSubmission = () => controller.abort();
+  await assert.rejects(requestNode(base + '/cancel-after-send', { method: 'POST', body: Buffer.from('sent'),
+    timeout: 5000, signal: controller.signal, env: {} }), error => error.code === 'TIMEOUT' && error.submitted);
 });
 
 test('curl transport separates headers/body and protects credentials from arguments', async t => {
