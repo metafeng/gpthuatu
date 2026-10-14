@@ -27,19 +27,21 @@ test('installation preview has no side effects', async t => {
   const plan = await install({ source, home, dryRun: true });
   assert.equal(plan.configPreserved, true);
   await fs.access(old);
-  await assert.rejects(fs.access(plan.canonical));
+  assert.equal(plan.canonical, old);
+  assert.equal(await fs.readFile(path.join(old, 'SKILL.md'), 'utf8'), '---\nname: fangxin-image-gen\n---\nold version');
   await assert.rejects(fs.access(path.join(home, '.agents', 'skill-backups')));
 });
 
-test('migration keeps config, disables old entries, stores recoverable backups and one shared skill', async t => {
+test('update keeps the original identity, config, recoverable backups and one shared skill', async t => {
   const { home, old } = await fixture(t);
   const result = await install({ source, home });
-  await assert.rejects(fs.access(old));
+  assert.equal(result.canonical, old);
+  assert.match(await fs.readFile(path.join(old, 'SKILL.md'), 'utf8'), /^name: fangxin-image-gen$/m);
   assert.equal(await fs.readFile(path.join(result.canonical, '.env'), 'utf8'), 'FANGXIN_API_KEY=fixture-private\n');
   if (process.platform !== 'win32') assert.equal((await fs.stat(path.join(result.canonical, '.env'))).mode & 0o777, 0o600);
   for (const agent of ['codex', 'claude']) {
-    await assert.rejects(fs.access(path.join(home, `.${agent}`, 'skills', 'fangxin-image-gen')));
-    assert.equal(await fs.realpath(path.join(home, `.${agent}`, 'skills', 'fangxin-draw')), await fs.realpath(result.canonical));
+    await assert.rejects(fs.access(path.join(home, `.${agent}`, 'skills', 'fangxin-draw')));
+    assert.equal(await fs.realpath(path.join(home, `.${agent}`, 'skills', 'fangxin-image-gen')), await fs.realpath(result.canonical));
   }
   const record = JSON.parse(await fs.readFile(path.join(result.backupRoot, 'restore.json'), 'utf8'));
   const saved = record.moved.find(x => x.original === old);
@@ -61,7 +63,7 @@ test('reinstallation preserves private config and updates the same canonical dir
 test('unrelated directories are not overwritten', async t => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'fangxin-unrelated-'));
   t.after(() => fs.rm(home, { recursive: true, force: true }));
-  const target = path.join(home, '.agents', 'skills', 'fangxin-draw');
+  const target = path.join(home, '.agents', 'skills', 'fangxin-image-gen');
   await fs.mkdir(target, { recursive: true });
   await fs.writeFile(path.join(target, 'important.txt'), 'keep');
   await assert.rejects(install({ source, home }));
@@ -75,7 +77,7 @@ test('failure creating agent links rolls back old directories and config', async
   try { await assert.rejects(install({ source, home }), /simulated link failure/); }
   finally { fs.symlink = original; }
   assert.equal(await fs.readFile(path.join(old, '.env'), 'utf8'), 'FANGXIN_API_KEY=fixture-private\n');
-  await assert.rejects(fs.access(path.join(home, '.agents', 'skills', 'fangxin-draw')));
+  assert.equal(await fs.readFile(path.join(old, 'SKILL.md'), 'utf8'), '---\nname: fangxin-image-gen\n---\nold version');
   assert.equal(await fs.realpath(path.join(home, '.codex', 'skills', 'fangxin-image-gen')), await fs.realpath(old));
 });
 
@@ -85,5 +87,25 @@ test('self-install keeps a clone and refreshes aliases without removing the sour
   const result = await install({ source: first.canonical, home });
   assert.equal(await fs.realpath(result.canonical), await fs.realpath(first.canonical));
   await fs.access(path.join(first.canonical, 'src', 'cli.mjs'));
-  assert.equal(await fs.realpath(path.join(home, '.codex', 'skills', 'fangxin-draw')), await fs.realpath(first.canonical));
+  assert.equal(await fs.realpath(path.join(home, '.codex', 'skills', 'fangxin-image-gen')), await fs.realpath(first.canonical));
+});
+
+test('temporary renamed installations return to the original identity without losing config', async t => {
+  const { home, old } = await fixture(t);
+  const temporary = path.join(home, '.agents', 'skills', 'fangxin-draw');
+  await fs.rename(old, temporary);
+  await fs.writeFile(path.join(temporary, 'SKILL.md'), '---\nname: fangxin-draw\n---\n');
+  for (const agent of ['codex', 'claude']) {
+    const dir = path.join(home, `.${agent}`, 'skills');
+    await fs.rm(path.join(dir, 'fangxin-image-gen'));
+    await fs.symlink(temporary, path.join(dir, 'fangxin-draw'), process.platform === 'win32' ? 'junction' : 'dir');
+  }
+  const result = await install({ source, home });
+  assert.equal(result.canonical, old);
+  await assert.rejects(fs.access(temporary));
+  assert.equal(await fs.readFile(path.join(old, '.env'), 'utf8'), 'FANGXIN_API_KEY=fixture-private\n');
+  for (const agent of ['codex', 'claude']) {
+    await assert.rejects(fs.access(path.join(home, `.${agent}`, 'skills', 'fangxin-draw')));
+    assert.equal(await fs.realpath(path.join(home, `.${agent}`, 'skills', 'fangxin-image-gen')), await fs.realpath(old));
+  }
 });

@@ -97,7 +97,7 @@ export async function callProvider(options, config, payload, deadline, transport
     try {
       response = await transport(`${API_ROOT}/${endpoint}`, { method: 'POST',
         headers: { Authorization: `Bearer ${config.keys[keyIndex]}`, 'Content-Type': payload.contentType,
-          'User-Agent': 'fangxin-draw-node', Accept: 'application/json' },
+          'User-Agent': 'fangxin-image-gen-node', Accept: 'application/json' },
         body: payload.body, timeout: Math.min(options.timeout, deadline - performance.now()),
         connectTimeout: options.connectTimeout, env: config.env, signal });
     } catch (error) {

@@ -68,7 +68,7 @@ export function normalizeOptions(v, config) {
     n: integer(v.n ?? 1, 1, 10, 'n'), images, mask: v.mask, inputFidelity: v['input-fidelity'],
     user: v.user, maxAttempts, timeout, connectTimeout, totalTimeout, transport,
     retryUncertain: v['retry-uncertain'] ?? false, strictSize: v['strict-size'] ?? false,
-    outdir: expandPath(v.outdir ?? './outputs/fangxin-draw'), json: v.json ?? false, dryRun: v['dry-run'] ?? false };
+    outdir: expandPath(v.outdir ?? './outputs/fangxin-image-gen'), json: v.json ?? false, dryRun: v['dry-run'] ?? false };
 }
 
 export function makeFields(o) {

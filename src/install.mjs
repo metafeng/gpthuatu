@@ -9,8 +9,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const SOURCE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const NAME = 'fangxin-draw';
-const OLD = 'fangxin-image-gen';
+const NAME = 'fangxin-image-gen';
+// Recognize the temporary renamed installation only for migration back to the original ID.
+const OLD = 'fangxin-draw';
 const FILES = ['SKILL.md', 'README.md', 'agents', 'scripts', 'src', 'vendor', 'references', 'tests',
   'package.json', 'package-lock.json', '.github', '.gitignore', '.env.example'];
 async function stat(file) { try { return await fs.lstat(file); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } }
@@ -38,7 +39,7 @@ export async function install({ source = SOURCE, home = os.homedir(), agents = [
   const canonical = path.resolve(target || path.join(home, '.agents', 'skills', NAME));
   if (!agents.every(x => ['codex', 'claude'].includes(x))) throw new Error('agents 只能为 codex、claude；其他 Agent 使用 --target 指定安装目录。');
   const oldCanonical = path.join(home, '.agents', 'skills', OLD);
-  const nested = path.join(home, '.agents', 'skills', 'baoyu-danger-gemini-web', OLD);
+  const nested = path.join(home, '.agents', 'skills', 'baoyu-danger-gemini-web', NAME);
   const aliases = agents.flatMap(agent => [path.join(home, `.${agent}`, 'skills', OLD), path.join(home, `.${agent}`, 'skills', NAME)]);
   const candidates = [...new Set([canonical, oldCanonical, nested, ...aliases])];
   const removals = [];
@@ -66,7 +67,7 @@ export async function install({ source = SOURCE, home = os.homedir(), agents = [
     try { envBytes = await fs.readFile(file); envOrigin = file; break; } catch (e) { if (e.code !== 'ENOENT') throw e; }
   }
   // Legacy embedded keys are migrated into a private config file, never into the new source code.
-  if (!envBytes) for (const root of [oldCanonical, nested, source]) {
+  if (!envBytes) for (const root of [canonical, oldCanonical, nested, source]) {
     try {
       const legacy = await fs.readFile(path.join(root, 'scripts', 'generate.py'), 'utf8');
       const match = legacy.match(/DEFAULT_API_KEY\s*=\s*["']([^"'\r\n]+)["']/);
@@ -142,7 +143,7 @@ export async function main() {
   try {
     const { values } = parseArgs({ options: { agents: { type: 'string' }, target: { type: 'string' }, home: { type: 'string' },
       'dry-run': { type: 'boolean' }, help: { type: 'boolean' } } });
-    if (values.help) { console.log('node scripts/install.mjs [--agents codex,claude] [--target /path/to/skills/fangxin-draw] [--dry-run]\n自动备份旧版、保留配置，并安装放心画图。备份位于 ~/.agents/skill-backups/，不进入技能扫描目录。'); return; }
+    if (values.help) { console.log('node scripts/install.mjs [--agents codex,claude] [--target /path/to/skills/fangxin-image-gen] [--dry-run]\n自动备份旧版、保留配置，并安装放心画图。备份位于 ~/.agents/skill-backups/，不进入技能扫描目录。'); return; }
     console.log(JSON.stringify(await install({ home: values.home, target: values.target, agents: values.agents !== undefined ? values.agents.split(',').filter(Boolean) : ['codex', 'claude'], dryRun: values['dry-run'] }), null, 2));
   } catch (error) { console.error(`安装失败：${error.message}`); process.exitCode = 1; }
 }

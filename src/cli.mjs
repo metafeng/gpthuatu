@@ -23,7 +23,7 @@ node scripts/generate.mjs --prompt "背景换成海边" --image /path/photo.png
 --n NUMBER                     1～10；默认 1
 --moderation VALUE             auto/low；默认 auto
 --input-fidelity VALUE         仅旧模型支持；Flare 请省略
---outdir PATH                  默认 ./outputs/fangxin-draw
+--outdir PATH                  默认 ./outputs/fangxin-image-gen
 --timeout SECONDS              单次请求上限，默认 420
 --connect-timeout SECONDS      连接上限，默认 15
 --total-timeout SECONDS        全任务网络预算，默认 600

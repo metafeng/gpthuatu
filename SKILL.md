@@ -1,5 +1,5 @@
 ---
-name: fangxin-draw
+name: fangxin-image-gen
 description: 放心画图。使用放心 API 和 Node.js 生成图片、编辑 PNG/JPEG 参考图、合成多张图片或按遮罩局部修改。默认模型 gpt-image-2.5-flare；用于用户明确选择放心接口或此技能的画图、改图、合图请求。
 ---
 
