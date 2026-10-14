@@ -1,6 +1,10 @@
-.DS_Store
-*/.DS_Store
-__pycache__/
-*/__pycache__/
 .env
-*/.env
+.env.*
+!.env.example
+node_modules/
+outputs/
+tmp/
+*.log
+.DS_Store
+__pycache__/
+*.tmp
