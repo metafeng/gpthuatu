@@ -6,6 +6,16 @@ import { DrawError } from './errors.mjs';
 
 export const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const DEFAULT_MODEL = 'gpt-image-2.5-flare';
+export const KEY_SETUP_URL = 'https://fangxinapi.com/keys';
+
+export function keySetup(config) {
+  return {
+    url: KEY_SETUP_URL,
+    message: `首次使用请登录放心 API，选择支持画图模型的分组（需支持 ${config.model || DEFAULT_MODEL}），再创建 API Key。`,
+    envFile: config.envFile,
+    variable: 'FANGXIN_API_KEY',
+  };
+}
 
 export async function loadConfig(env = process.env, root = ROOT) {
   const selected = env.FANGXIN_ENV_FILE?.trim();
@@ -34,5 +44,6 @@ export async function loadConfig(env = process.env, root = ROOT) {
 
 export function requireKeys(config) {
   if (!config.keys.length) throw new DrawError('CONFIG_ERROR',
-    `尚未配置密钥。请在 ${config.envFile} 写入 FANGXIN_API_KEY，或设置对应环境变量。`);
+    `尚未配置密钥。${keySetup(config).message}请在 ${config.envFile} 写入 FANGXIN_API_KEY，或设置对应环境变量。`,
+    { setupUrl: KEY_SETUP_URL });
 }

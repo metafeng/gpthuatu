@@ -18,6 +18,8 @@ node <skill-root>/scripts/generate.mjs --prompt "用户提示词" --json --outdi
 
 脚本读取 shell 配置，其次 FANGXIN_ENV_FILE 指定文件，否则 <skill-root>/.env。密钥变量为 FANGXIN_API_KEY，可选编号备用密钥。不得把密钥写进提示词、源码、命令参数、结果或公开文档；缺少配置时说明所需变量，不用示例密钥发请求。
 
+首次安装或缺少 Key 时，直接给用户可点击链接：[点击获取放心 API 画图分组的 Key](https://fangxinapi.com/keys)。提醒登录或注册后选择支持画图模型的分组，并确认支持当前所选模型（默认 gpt-image-2.5-flare）；以控制台显示为准，不猜测分组名称。
+
 文生图只传文字。改图先查看用户引用图片，再传本地路径或 HTTPS URL；多图重复 --image。引用不到原图时再请求补充，不凭空生成替代品。
 
 ```bash

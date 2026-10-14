@@ -7,6 +7,7 @@ import { parseArgs, parseEnv } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { loadConfig, keySetup } from './config.mjs';
 
 const SOURCE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const NAME = 'fangxin-image-gen';
@@ -130,7 +131,9 @@ export async function install({ source = SOURCE, home = os.homedir(), agents = [
       linksCreated.push(link);
     }
     if (moved.length) await fs.writeFile(path.join(backupRoot, 'restore.json'), JSON.stringify({ canonical, moved, linksCreated }, null, 2), { mode: 0o600 });
-    return { ...plan, installed: true, restartAgent: true };
+    const config = await loadConfig(process.env, canonical);
+    return { ...plan, installed: true, restartAgent: true,
+      ...(!config.keys.length ? { keySetup: keySetup(config) } : {}) };
   } catch (error) {
     for (const link of linksCreated.reverse()) await fs.rm(link, { force: true });
     if (installed) await fs.rm(canonical, { recursive: true, force: true });

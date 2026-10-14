@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import { parseArgs } from 'node:util';
-import { loadConfig } from './config.mjs';
+import { loadConfig, keySetup } from './config.mjs';
 import { normalizeOptions, expandPath } from './options.mjs';
 import { generate } from './generate.mjs';
 import { inspectImage } from './images.mjs';
@@ -58,7 +58,8 @@ export async function main(argv = process.argv.slice(2)) {
     if (values.doctor) {
       console.log(JSON.stringify({ success: true, node: process.versions.node, minimumNode: '22.19.0',
         model: config.model, keysConfigured: config.keys.length, envFile: config.envFile,
-        nativeTransport: true, codecsBundled: true }, null, 2));
+        nativeTransport: true, codecsBundled: true,
+        ...(!config.keys.length ? { keySetup: keySetup(config) } : {}) }, null, 2));
       return;
     }
     if (values.verify) {
@@ -91,7 +92,7 @@ export async function main(argv = process.argv.slice(2)) {
   } catch (error) {
     const result = safeError(error, config?.keys);
     if (values.json || argv.includes('--json')) console.log(JSON.stringify(result, null, 2));
-    else console.error(`${result.code}：${result.message}${result.manifest ? `\n结果记录：${result.manifest}` : ''}`);
+    else console.error(`${result.code}：${result.message}${result.setupUrl ? `\n获取画图分组 Key：${result.setupUrl}` : ''}${result.manifest ? `\n结果记录：${result.manifest}` : ''}`);
     process.exitCode = error.code === 'INPUT_ERROR' || error.code?.startsWith('ERR_PARSE_ARGS') ? 4 : error.code === 'CONFIG_ERROR' ? 2 : 1;
   } finally {
     process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', interrupt);

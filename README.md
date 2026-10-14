@@ -57,7 +57,9 @@ Git 安装的新版可在 `~/.agents/skills/fangxin-image-gen` 执行 `git pull 
 
 ## 配置密钥
 
-到 [放心 API](https://fangxinapi.com) 创建自己的 API Key。首次安装且没有旧配置时，将 `.env.example` 复制成安装目录中的 `.env`，在编辑器填写：
+**首次安装的伙伴，请先 [点击这里获取放心 API 画图分组的 Key](https://fangxinapi.com/keys)。** 登录或注册后，选择**支持画图模型的分组**创建 API Key，并确认该分组支持默认模型 `gpt-image-2.5-flare`；分组实际支持的模型以控制台显示为准。
+
+首次安装且没有旧配置时，安装结果、环境检查和缺少密钥的提示都会给出上述获取链接。获取 Key 后，将 `.env.example` 复制成安装目录中的 `.env`，在编辑器填写：
 
 ```dotenv
 FANGXIN_API_KEY=你的密钥

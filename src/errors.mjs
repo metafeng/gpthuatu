@@ -29,5 +29,7 @@ export function safeError(error, secrets = []) {
     ...(error.uncertain ? { uncertain: true } : {}),
     ...(error.files ? { files: error.files } : {}),
     ...(error.manifest ? { manifest: error.manifest } : {}),
+    // Only this known public onboarding URL may bypass signed-URL redaction.
+    ...(error.setupUrl === 'https://fangxinapi.com/keys' ? { setupUrl: error.setupUrl } : {}),
   };
 }
