@@ -11,15 +11,17 @@ description: GPT画图。通过用户配置的 OpenAI 兼容图片接口生成�
 
 先运行 `node <skill-root>/scripts/generate.mjs --doctor`，查看服务商、接口地址、模型、认证方式和已配置密钥数量，不输出密钥。
 
-配置在安装目录 `.env`，支持 IMAGE_API_BASE_URL、IMAGE_API_KEY、IMAGE_API_MODEL。地址可为带 /v1 的基础地址，也可直接填完整的 /images/generations 链接，脚本会规范化。只支持同步返回 data[].b64_json 或 data[].url 的 OpenAI 兼容图片接口；异步任务接口或其他协议需要单独适配，不能承诺任意链接都能画图。
+配置在安装目录 `.env`，按服务商分别保存 FANGXIN_API_KEY、TT_API_KEY、OPENAI_API_KEY。IMAGE_API_PROVIDER=fangxin|ttapi|openai 选择默认服务商，程序自动匹配地址与认证；IMAGE_API_MODEL 设置模型。用户说“用 TT 画图”时加 --provider ttapi，“用放心画图”时加 --provider fangxin；只影响本次请求，不修改默认配置。不指定时遵循默认配置；多家有 Key 且未设置默认时先让用户选择，不擅自切换。
+
+其他兼容接口使用 IMAGE_API_PROVIDER=custom，并配置 IMAGE_API_BASE_URL、IMAGE_API_KEY。地址可为基础地址或完整 /images/generations 链接。只支持同步返回 data[].b64_json 或 data[].url 的 OpenAI 兼容图片接口；异步任务接口或其他协议需要单独适配，不能承诺任意链接都能画图。
 
 - TTAPI：地址 https://api.ttapi.io/v1，默认自动选择 TT-API-KEY 认证；[获取 Key](https://dashboard.ttapi.io)。
 - 放心 API：地址 https://fangxinapi.com/v1，默认 Bearer 认证；[获取画图分组 Key](https://fangxinapi.com/keys)，提醒选择支持所选画图模型的分组，以控制台为准。
 - 其他服务：核对服务商文档；默认 Bearer，使用专用密钥请求头时设置 IMAGE_API_AUTH_TYPE=api-key 和 IMAGE_API_KEY_HEADER。不要根据 Key 外观推测认证。
 
-不要把密钥写入源码、命令参数、提示词、结果或公开文档。先给缺少配置的用户清楚的配置步骤和对应服务商链接，不用示例密钥提交请求。已有 FANGXIN_API_KEY/FANGXIN_MODEL 配置可继续使用；一旦选择新 IMAGE_API 配置，不回退使用旧服务商的 Key。
+不要把密钥写入源码、命令参数、提示词、结果或公开文档。先给缺少配置的用户清楚的配置步骤和对应服务商链接，不用示例密钥提交请求。明确选择服务商后只读取对应名称的 Key，不回退其他服务商或通用 Key；已有 IMAGE_API_BASE_URL/IMAGE_API_KEY 配对配置及 FANGXIN_MODEL 仍兼容。
 
-shell 变量优先于配置文件；文件由 IMAGE_API_ENV_FILE（兼容 FANGXIN_ENV_FILE）选择，默认安装目录 .env。可用独立配置文件切换服务商，不覆盖原配置。详见 [README](README.md)。
+shell 同名变量优先于配置文件；文件由 IMAGE_API_ENV_FILE（兼容 FANGXIN_ENV_FILE）选择，默认安装目录 .env。多家 Key 可以同时保存，不根据外观猜归属，不在服务商之间轮换备用 Key。详见 [README](README.md)。
 
 ## 出图与改图
 
@@ -28,7 +30,7 @@ node <skill-root>/scripts/generate.mjs --prompt "用户提示词" --json --outdi
 node <skill-root>/scripts/generate.mjs --prompt "保留人物，背景换成海边" --image /absolute/reference.png --json
 ```
 
-模型优先级：显式 --model → IMAGE_API_MODEL（旧配置兼容 FANGXIN_MODEL）→ gpt-image-2.5-flare。不静默替换模型或服务商。改图先查看用户引用图，多图重复 --image；拿不到原图时再请用户补充。
+模型优先级：显式 --model → 对应服务商的 FANGXIN_API_MODEL / TT_API_MODEL / OPENAI_API_MODEL（放心兼容 FANGXIN_MODEL）→ IMAGE_API_MODEL → gpt-image-2.5-flare。不静默替换模型或服务商。改图先查看用户引用图，多图重复 --image；拿不到原图时再请用户补充。
 
 TTAPI 编辑使用文档定义的 JSON 图片引用；放心使用重复 image 的 multipart；其他服务默认 multipart image[]。这些上传方式可配置，TTAPI 当前仅文生图通过收费实测，不把编辑协议适配称为实测成功。详细边界见 [兼容性](references/compatibility.md)。
 

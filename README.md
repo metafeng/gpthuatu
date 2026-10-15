@@ -39,40 +39,49 @@ chmod 600 ~/.agents/skills/gpthuatu/.env
 
 Windows 在文件管理器中复制、编辑即可；路径例如 `C:\Users\用户名\.agents\skills\gpthuatu\.env`。
 
-### 使用 TTAPI
+### 按服务商分别保存 Key
 
-[点击获取 TTAPI Key](https://dashboard.ttapi.io)，确认账号可使用所选画图模型，然后填写：
+两家的 Key 可以同时放在同一个私有文件中，各填各的位置：
 
 ```dotenv
-IMAGE_API_BASE_URL=https://api.ttapi.io/v1
-IMAGE_API_KEY=填写你自己的TTAPI密钥
+# 默认用哪家：fangxin 或 ttapi
+IMAGE_API_PROVIDER=fangxin
+FANGXIN_API_KEY=填写你自己的放心密钥
+TT_API_KEY=填写你自己的TTAPI密钥
 IMAGE_API_MODEL=gpt-image-2.5-flare
 ```
 
-也可以直接粘贴你拿到的完整链接：`https://api.ttapi.io/v1/images/generations`。程序会自动整理地址，并使用 TTAPI 要求的 `TT-API-KEY` 认证。日常无需修改代码。
+只用一家时，另一家的 Key 留空即可。两家都配置时，用 IMAGE_API_PROVIDER 选择默认服务商；不指定默认且存在多家 Key 时会提示选择，不猜测。只配置一家且没有旧通用配置时会自动选择该家。
 
-### 使用放心 API
+| 配置名称 | 对应接口 | 自动使用的认证方式 | 获取 Key |
+|---|---|---|---|
+| FANGXIN_API_KEY | https://fangxinapi.com/v1 | Authorization: Bearer | [放心 API](https://fangxinapi.com/keys) |
+| TT_API_KEY | https://api.ttapi.io/v1 | TT-API-KEY | [TTAPI](https://dashboard.ttapi.io) |
+| OPENAI_API_KEY | https://api.openai.com/v1 | Authorization: Bearer | [OpenAI 官方](https://platform.openai.com/api-keys) |
 
-首次使用的伙伴，请先 [点击获取放心 API 画图分组的 Key](https://fangxinapi.com/keys)。登录或注册后选择**支持画图模型的分组**，确认支持所选模型；实际支持范围以控制台为准。
+首次使用放心 API，请点击上表链接，登录或注册后选择**支持画图模型的画图分组**，确认支持所选模型；实际支持范围以控制台为准。TTAPI 和官方账号也需要有对应模型的使用权限。
+
+已知服务的地址、认证方式不必手动填写。OPENAI_API_KEY 使用官方服务时，设置 IMAGE_API_PROVIDER=openai；模型名称按所用账号实际支持情况填写。
+
+### 其他兼容服务
+
+使用自己的接口链接和 Key 时，填写：
 
 ```dotenv
-IMAGE_API_BASE_URL=https://fangxinapi.com/v1
-IMAGE_API_KEY=填写你自己的放心密钥
+IMAGE_API_PROVIDER=custom
+IMAGE_API_BASE_URL=https://example.com/v1
+IMAGE_API_KEY=填写这个服务商自己的密钥
 IMAGE_API_MODEL=gpt-image-2.5-flare
 ```
 
-### 使用 OpenAI 官方或其他兼容服务
-
-把地址换成服务商文档里的基础地址，填写该服务商自己的 Key。例如官方基础地址为 `https://api.openai.com/v1`，在 [官方控制台](https://platform.openai.com/api-keys) 获取 Key。
-
-未知服务默认使用 `Authorization: Bearer`。如果文档要求专用请求头，增加：
+地址也可以直接填完整 /v1/images/generations 链接。未知服务默认使用 Authorization: Bearer；如果文档要求专用请求头，增加：
 
 ```dotenv
 IMAGE_API_AUTH_TYPE=api-key
 IMAGE_API_KEY_HEADER=X-API-Key
 ```
 
-`X-API-Key` 必须换成服务商文档规定的头名。`IMAGE_API_AUTH_TYPE=bearer` 可显式选择 Bearer；默认 `auto` 只对已知 TTAPI 自动使用 `TT-API-KEY`，其他服务用 Bearer。
+X-API-Key 必须换成服务商文档规定的头名。通用 IMAGE_API_KEY 只用于这份地址配置，不会作为已明确选择的放心或 TT 服务商的备用 Key。
 
 ### 检查配置
 
@@ -82,7 +91,7 @@ IMAGE_API_KEY_HEADER=X-API-Key
 node ~/.agents/skills/gpthuatu/scripts/generate.mjs --doctor
 ```
 
-会显示接口地址、认证方式、模型和密钥数量，不会显示 Key。也可以对 AI 说：“检查 GPT画图是否配置好了，不要提交出图请求。”
+会显示服务商、接口地址、Key 变量名、认证方式、模型和密钥数量，不会显示 Key。也可以对 AI 说：“检查 GPT画图是否配置好了，不要提交出图请求。”
 
 下面的直接运行示例均在 Skill 安装目录中执行。
 
@@ -99,28 +108,31 @@ node scripts/install.mjs
 
 安装程序会识别旧 `fangxin-image-gen` 和临时 `fangxin-draw`，先备份到 `~/.agents/skill-backups/`，再替换为 `gpthuatu`。旧入口移出技能列表，已有 `.env` 逐字保留；安装失败会回滚。备份含旧配置，请勿公开上传。重新打开 AI 工具后使用「GPT画图」和 `$gpthuatu`。
 
-旧 `FANGXIN_API_KEY`、`FANGXIN_MODEL` 和 `FANGXIN_ENV_FILE` 仍可使用，未指定接口地址时保留原放心 API 默认地址。若切换到 TTAPI 或其他服务，请按上面的完整示例填写 `IMAGE_API_` 配置。程序不会把旧放心 Key 当作新服务商的备用 Key。
+已有 FANGXIN_API_KEY、FANGXIN_MODEL 和 FANGXIN_ENV_FILE 仍可使用。旧 IMAGE_API_BASE_URL + IMAGE_API_KEY 配对配置也继续兼容。要改成多服务商保存方式，请将原 Key 放到对应的 FANGXIN_API_KEY 或 TT_API_KEY 中，再设置 IMAGE_API_PROVIDER；程序不会自动猜测通用 Key 的归属。不要把空白示例覆盖到现有私有配置上。
 
 Git 安装用户可在 `~/.agents/skills/gpthuatu` 执行 `git pull --ff-only` 更新；ZIP 安装用户下载最新 ZIP，再运行安装程序。仓库地址保持原链接，避免已有分享链接失效。
 
-## 同时保留多家服务配置
+## 切换服务商
 
-可分别建立私有配置文件，例如 `ttapi.env`、`fangxin.env`，每个文件只写该服务商的地址、Key 和模型。通过 `IMAGE_API_ENV_FILE` 选择文件；不要将 Key 写入命令参数：
+配置好两家的 Key 后，可以直接对 AI 说：“用 TT 画一只猫”或“用放心画一张海报”。AI 会为本次请求选择对应服务商，不修改默认设置。
+
+直接运行时加 --provider：
 
 ```bash
-IMAGE_API_ENV_FILE=/absolute/path/to/ttapi.env node scripts/generate.mjs --doctor
+node scripts/generate.mjs --provider ttapi --doctor
+node scripts/generate.mjs --provider fangxin --doctor
+node scripts/generate.mjs --provider ttapi --prompt "一只晒太阳的小猫"
 ```
 
-PowerShell：
+默认服务商由 .env 中的 IMAGE_API_PROVIDER 决定；命令参数 --provider 优先级更高。明确选择后，只读取该家的命名 Key。未填写就提示补充，不会尝试另一家的 Key，也不会自动改用其他服务商。
 
-```powershell
-$env:IMAGE_API_ENV_FILE="C:\path\to\ttapi.env"
-node scripts/generate.mjs --doctor
-```
+各家的模型可分别设置 FANGXIN_API_MODEL、TT_API_MODEL、OPENAI_API_MODEL；未填时使用 IMAGE_API_MODEL，再未填时使用默认模型。--model 可指定本次模型。放心的旧 FANGXIN_MODEL 仍兼容。
 
-shell 变量优先于同名文件配置；切换服务时请清除之前导出的 `IMAGE_API_` 配置，避免覆盖新文件。只对同一服务商使用 `IMAGE_API_KEY1` 等编号备用 Key，不跨服务商混用。所有 Key 共享总请求次数上限。
+同一家备用 Key 使用 FANGXIN_API_KEY1、TT_API_KEY1 等编号变量；也支持 KEY2、KEY_BACKUP、KEYS（例如 TT_API_KEY_BACKUP、TT_API_KEYS）。只在所选服务商内部轮换，所有 Key 共享总请求次数上限。
 
-高级编辑协议：`IMAGE_API_EDIT_FORMAT=json|multipart`；multipart 文件字段 `IMAGE_API_IMAGE_FIELD=image|image[]`。已知 TTAPI 默认 JSON 图片引用，放心默认 multipart image，其他服务默认 multipart image[]，仍以服务商文档及实际测试为准。
+也可以通过 IMAGE_API_ENV_FILE 指定独立私有配置文件；兼容旧 FANGXIN_ENV_FILE。shell 同名变量优先于文件，切换时注意清除旧的导出变量。
+
+高级设置：已命名服务的覆盖项使用 FANGXIN_API_ / TT_API_ / OPENAI_API_ 前缀，例如 TT_API_BASE_URL、TT_API_EDIT_FORMAT。地址仅允许对应服务商域名；其他服务使用 custom。编辑格式 EDIT_FORMAT=json|multipart，multipart 字段 IMAGE_FIELD=image|image[]；已知 TTAPI 默认 JSON，放心默认 multipart image，官方默认 multipart image[]。custom 使用 IMAGE_API_EDIT_FORMAT 等通用变量。详见 [兼容性说明](references/compatibility.md)。
 
 ## 自然语言使用
 

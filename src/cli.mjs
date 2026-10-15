@@ -13,6 +13,7 @@ node scripts/generate.mjs --prompt "背景换成海边" --image /path/photo.png
 
 --prompt TEXT                  提示词（必填，最多 32000 字符）
 --model NAME                   默认 gpt-image-2.5-flare
+--provider NAME                本次使用 fangxin/ttapi/openai/custom，不改默认配置
 --image PATH_OR_HTTPS_URL       参考图；可重复，最多 16 张 PNG/JPEG
 --mask PATH_OR_HTTPS_URL        PNG 遮罩，与第一张参考图同尺寸，透明处编辑
 --size SIZE                    auto 或 WIDTHxHEIGHT；默认 auto
@@ -46,7 +47,7 @@ export async function main(argv = process.argv.slice(2)) {
   process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
   let values = {};
   try {
-    const stringNames = ['prompt', 'model', 'size', 'quality', 'background', 'output-format', 'output-compression',
+    const stringNames = ['prompt', 'model', 'provider', 'size', 'quality', 'background', 'output-format', 'output-compression',
       'n', 'moderation', 'input-fidelity', 'style', 'outdir', 'timeout', 'connect-timeout', 'total-timeout',
       'max-attempts', 'retries', 'transport', 'user', 'mask', 'verify'];
     const options = Object.fromEntries(stringNames.map(name => [name, { type: 'string' }]));
@@ -54,12 +55,12 @@ export async function main(argv = process.argv.slice(2)) {
     options.image = { type: 'string', multiple: true };
     ({ values } = parseArgs({ args: argv, options, strict: true, allowPositionals: false }));
     if (values.help) { console.log(HELP); return; }
-    config = await loadConfig();
+    config = await loadConfig(process.env, undefined, values.provider);
     if (values.doctor) {
       console.log(JSON.stringify({ success: true, node: process.versions.node, minimumNode: '22.19.0',
         model: values.model || config.model, provider: config.provider, apiBaseUrl: config.apiBaseUrl,
         authType: config.authType, apiKeyHeader: config.authType === 'api-key' ? config.apiKeyHeader : 'Authorization',
-        editFormat: config.editFormat, keysConfigured: config.keys.length, envFile: config.envFile,
+        editFormat: config.editFormat, keyVariable: `${config.keyNamespace}_API_KEY`, keysConfigured: config.keys.length, envFile: config.envFile,
         nativeTransport: true, codecsBundled: true,
         ...(!config.keys.length ? { keySetup: keySetup(config) } : {}) }, null, 2));
       return;
