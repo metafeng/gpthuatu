@@ -6,7 +6,7 @@ import { generate } from './generate.mjs';
 import { inspectImage } from './images.mjs';
 import { safeError } from './errors.mjs';
 
-const HELP = `放心画图 — Node.js 22.19+（建议 24 LTS）
+const HELP = `GPT画图 — Node.js 22.19+（建议 24 LTS）
 
 node scripts/generate.mjs --prompt "一只晒太阳的橙色小猫"
 node scripts/generate.mjs --prompt "背景换成海边" --image /path/photo.png
@@ -23,7 +23,7 @@ node scripts/generate.mjs --prompt "背景换成海边" --image /path/photo.png
 --n NUMBER                     1～10；默认 1
 --moderation VALUE             auto/low；默认 auto
 --input-fidelity VALUE         仅旧模型支持；Flare 请省略
---outdir PATH                  默认 ./outputs/fangxin-image-gen
+--outdir PATH                  默认 ./outputs/gpthuatu
 --timeout SECONDS              单次请求上限，默认 420
 --connect-timeout SECONDS      连接上限，默认 15
 --total-timeout SECONDS        全任务网络预算，默认 600
@@ -57,7 +57,9 @@ export async function main(argv = process.argv.slice(2)) {
     config = await loadConfig();
     if (values.doctor) {
       console.log(JSON.stringify({ success: true, node: process.versions.node, minimumNode: '22.19.0',
-        model: config.model, keysConfigured: config.keys.length, envFile: config.envFile,
+        model: values.model || config.model, provider: config.provider, apiBaseUrl: config.apiBaseUrl,
+        authType: config.authType, apiKeyHeader: config.authType === 'api-key' ? config.apiKeyHeader : 'Authorization',
+        editFormat: config.editFormat, keysConfigured: config.keys.length, envFile: config.envFile,
         nativeTransport: true, codecsBundled: true,
         ...(!config.keys.length ? { keySetup: keySetup(config) } : {}) }, null, 2));
       return;

@@ -4,9 +4,9 @@
     "jpeg-js": "0.4.4",
     "pngjs": "7.0.0"
   },
-  "name": "fangxin-image-gen",
+  "name": "gpthuatu",
   "private": true,
-  "description": "放心画图 — Node image-generation skill",
+  "description": "GPT画图 — Node image-generation skill",
   "type": "module",
   "engines": {
     "node": ">=22.19.0"

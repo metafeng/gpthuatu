@@ -1,103 +1,130 @@
-# 放心画图
+# GPT画图 · gpthuatu
 
-在 Codex、Claude Code 等支持本地 Skill 的 AI 工具中，用自然语言画图、改图、合图。使用 [放心 API](https://fangxinapi.com)，默认模型 `gpt-image-2.5-flare`。
+在 Codex、Claude Code 等支持本地 Skill 的 AI 工具中，用自然语言画图、改图或合图。填写自己的接口链接和 Key，即可使用兼容 OpenAI 图片协议的服务。默认模型 `gpt-image-2.5-flare`。
 
-技能标识与原版保持一致：`fangxin-image-gen`，调用仍使用 `$fangxin-image-gen`；中文显示名为「放心画图」。这是同一个 Skill 的实现更新。
+中文名称：**GPT画图**。英文标识：**gpthuatu**。调用：**`$gpthuatu`**。
 
-只需要 **Node.js 22.19 或更新版本**，推荐 [Node.js 24 LTS](https://nodejs.org/)。日常使用不需要 Python，也不用 `npm install`，图片解码组件已随技能打包。默认通过 Node HTTP/1.1 请求接口，curl 是可选备用通道。
+支持 TTAPI、放心 API、OpenAI 官方及同协议服务。需要服务商支持所选模型；只提供异步任务编号或其他协议的接口需要另外适配，不是任意网址都能直接出图。TTAPI 文生图已实测成功。
 
-## 安装
+## 1. 安装
 
-下载本仓库 ZIP 并解压，或用 Git：
+需要 **Node.js 22.19+**，推荐 [Node.js 24 LTS](https://nodejs.org/)。无需 Python，也不用 `npm install`。
+
+把下面这句话发给你的 AI 工具，让它帮助安装和配置：
+
+> 请安装 https://github.com/metafeng/fangxin-image-gen 的 GPT画图 Skill，运行安装程序并检查配置。已有旧版时先备份，保留我的配置，只保留 gpthuatu 入口。
+
+也可以下载仓库 ZIP 解压，或自己运行：
 
 ```bash
-git clone https://github.com/metafeng/fangxin-image-gen.git fangxin-image-gen
-cd fangxin-image-gen
+git clone https://github.com/metafeng/fangxin-image-gen.git gpthuatu
+cd gpthuatu
 node scripts/install.mjs
 ```
 
-程序默认将一份共享技能安装到 `~/.agents/skills/fangxin-image-gen`，为 Codex 和 Claude Code 建立入口。重新打开 AI 工具或刷新技能列表，显示名称为 **放心画图**，调用标识 `$fangxin-image-gen`。
+默认安装到 `~/.agents/skills/gpthuatu`，为 Codex 和 Claude Code 建立入口。重新打开 AI 工具或刷新技能列表后，选择「GPT画图」或输入 `$gpthuatu`。
 
-只安装到一个工具：
+只安装到一个工具：`node scripts/install.mjs --agents codex` 或 `--agents claude`。其他工具用 `--agents "" --target /absolute/path/to/skills/gpthuatu`。`--dry-run` 可预览安装计划。
+
+## 2. 填写接口链接和 Key
+
+第一次使用，在安装目录把 `.env.example` 复制为 `.env`，用编辑器填写。已有 `.env` 时直接编辑，**不要复制覆盖**。Key 只保存在自己的私有配置中，不要公开发布。
+
+macOS/Linux 可先准备文件：
 
 ```bash
-node scripts/install.mjs --agents codex
-node scripts/install.mjs --agents claude
+cp ~/.agents/skills/gpthuatu/.env.example ~/.agents/skills/gpthuatu/.env
+chmod 600 ~/.agents/skills/gpthuatu/.env
 ```
 
-其他工具可指定技能目录；空 agents 表示不创建 Codex/Claude 入口：
+Windows 在文件管理器中复制、编辑即可；路径例如 `C:\Users\用户名\.agents\skills\gpthuatu\.env`。
+
+### 使用 TTAPI
+
+[点击获取 TTAPI Key](https://dashboard.ttapi.io)，确认账号可使用所选画图模型，然后填写：
+
+```dotenv
+IMAGE_API_BASE_URL=https://api.ttapi.io/v1
+IMAGE_API_KEY=填写你自己的TTAPI密钥
+IMAGE_API_MODEL=gpt-image-2.5-flare
+```
+
+也可以直接粘贴你拿到的完整链接：`https://api.ttapi.io/v1/images/generations`。程序会自动整理地址，并使用 TTAPI 要求的 `TT-API-KEY` 认证。日常无需修改代码。
+
+### 使用放心 API
+
+首次使用的伙伴，请先 [点击获取放心 API 画图分组的 Key](https://fangxinapi.com/keys)。登录或注册后选择**支持画图模型的分组**，确认支持所选模型；实际支持范围以控制台为准。
+
+```dotenv
+IMAGE_API_BASE_URL=https://fangxinapi.com/v1
+IMAGE_API_KEY=填写你自己的放心密钥
+IMAGE_API_MODEL=gpt-image-2.5-flare
+```
+
+### 使用 OpenAI 官方或其他兼容服务
+
+把地址换成服务商文档里的基础地址，填写该服务商自己的 Key。例如官方基础地址为 `https://api.openai.com/v1`，在 [官方控制台](https://platform.openai.com/api-keys) 获取 Key。
+
+未知服务默认使用 `Authorization: Bearer`。如果文档要求专用请求头，增加：
+
+```dotenv
+IMAGE_API_AUTH_TYPE=api-key
+IMAGE_API_KEY_HEADER=X-API-Key
+```
+
+`X-API-Key` 必须换成服务商文档规定的头名。`IMAGE_API_AUTH_TYPE=bearer` 可显式选择 Bearer；默认 `auto` 只对已知 TTAPI 自动使用 `TT-API-KEY`，其他服务用 Bearer。
+
+### 检查配置
+
+运行以下检查，不调用出图接口，也不产生出图费用：
 
 ```bash
-node scripts/install.mjs --agents "" --target /absolute/path/to/skills/fangxin-image-gen
+node ~/.agents/skills/gpthuatu/scripts/generate.mjs --doctor
 ```
 
-`node scripts/install.mjs --dry-run` 预览将替换的目录，不修改文件。
+会显示接口地址、认证方式、模型和密钥数量，不会显示 Key。也可以对 AI 说：“检查 GPT画图是否配置好了，不要提交出图请求。”
 
-## 已经安装过 fangxin-image-gen 的用户
+下面的直接运行示例均在 Skill 安装目录中执行。
 
-**继续使用原来的 `$fangxin-image-gen`，无需换成另一个 Skill，也无需重新填写已有密钥。** 如果旧版从这个仓库克隆，在原仓库目录执行：
+## 已经安装过旧版的用户
+
+不用先手动卸载。在原仓库目录更新并运行安装程序：
 
 ```bash
 git pull --ff-only
 node scripts/install.mjs
 ```
 
-原目录有未提交修改时，Git 会停止更新；请保留原目录，下载本仓库 ZIP，在解压目录运行同一个安装命令。
+若原目录有未提交修改，请保留原目录，另行下载最新 ZIP，在解压目录运行安装程序。
 
-程序在同一标识下更新实现，自动备份旧目录、保留配置并整理 Codex/Claude 入口。若此前装到了临时名称 `fangxin-draw`，同一安装命令会备份该目录，并自动恢复原来的 `fangxin-image-gen` 入口：
+安装程序会识别旧 `fangxin-image-gen` 和临时 `fangxin-draw`，先备份到 `~/.agents/skill-backups/`，再替换为 `gpthuatu`。旧入口移出技能列表，已有 `.env` 逐字保留；安装失败会回滚。备份含旧配置，请勿公开上传。重新打开 AI 工具后使用「GPT画图」和 `$gpthuatu`。
 
-1. 先准备完整新版，检查目录归属。
-2. 将旧目录和配置移到 `~/.agents/skill-backups/`；备份在技能扫描目录之外，旧版不再重复出现。
-3. 保留已有 `.env` 和密钥；私有配置仅当前用户可读写。旧脚本中的内置密钥也能迁入私有配置，新源码不携带密钥。
-4. 安装新版并建立选中的工具入口，中途失败会回滚已移动目录。
+旧 `FANGXIN_API_KEY`、`FANGXIN_MODEL` 和 `FANGXIN_ENV_FILE` 仍可使用，未指定接口地址时保留原放心 API 默认地址。若切换到 TTAPI 或其他服务，请按上面的完整示例填写 `IMAGE_API_` 配置。程序不会把旧放心 Key 当作新服务商的备用 Key。
 
-配置中显式选择的模型也会保留；希望使用默认 Flare 时，删除 `.env` 中的 FANGXIN_MODEL 行即可。结果会显示备份位置，备份含旧配置，不要上传 GitHub。重新打开 AI 工具后使用「放心画图」。
+Git 安装用户可在 `~/.agents/skills/gpthuatu` 执行 `git pull --ff-only` 更新；ZIP 安装用户下载最新 ZIP，再运行安装程序。仓库地址保持原链接，避免已有分享链接失效。
 
-Git 安装的新版可在 `~/.agents/skills/fangxin-image-gen` 执行 `git pull --ff-only` 获取最新内容。ZIP 安装用户下载最新 ZIP，再运行安装程序，会继续备份并保留配置。
+## 同时保留多家服务配置
 
-## 配置密钥
-
-**首次安装的伙伴，请先 [点击这里获取放心 API 画图分组的 Key](https://fangxinapi.com/keys)。** 登录或注册后，选择**支持画图模型的分组**创建 API Key，并确认该分组支持默认模型 `gpt-image-2.5-flare`；分组实际支持的模型以控制台显示为准。
-
-首次安装且没有旧配置时，安装结果、环境检查和缺少密钥的提示都会给出上述获取链接。获取 Key 后，将 `.env.example` 复制成安装目录中的 `.env`，在编辑器填写：
-
-```dotenv
-FANGXIN_API_KEY=你的密钥
-```
-
-macOS/Linux 可这样准备文件：
+可分别建立私有配置文件，例如 `ttapi.env`、`fangxin.env`，每个文件只写该服务商的地址、Key 和模型。通过 `IMAGE_API_ENV_FILE` 选择文件；不要将 Key 写入命令参数：
 
 ```bash
-cp ~/.agents/skills/fangxin-image-gen/.env.example ~/.agents/skills/fangxin-image-gen/.env
-chmod 600 ~/.agents/skills/fangxin-image-gen/.env
+IMAGE_API_ENV_FILE=/absolute/path/to/ttapi.env node scripts/generate.mjs --doctor
 ```
 
-已有 `.env` 时直接编辑，不要复制覆盖。Windows 在文件管理器中复制、编辑即可。
+PowerShell：
 
-可选配置：
-
-```dotenv
-FANGXIN_API_KEY1=备用密钥
-FANGXIN_MODEL=gpt-image-2.5-flare
-HTTPS_PROXY=http://127.0.0.1:7890
-NO_PROXY=localhost,127.0.0.1
+```powershell
+$env:IMAGE_API_ENV_FILE="C:\path\to\ttapi.env"
+node scripts/generate.mjs --doctor
 ```
 
-shell 变量优先，其次 FANGXIN_ENV_FILE 指定文件；未指定时读取 Skill 安装目录的 `.env`。不执行配置文件中的脚本。所有密钥共享同一请求次数上限。
+shell 变量优先于同名文件配置；切换服务时请清除之前导出的 `IMAGE_API_` 配置，避免覆盖新文件。只对同一服务商使用 `IMAGE_API_KEY1` 等编号备用 Key，不跨服务商混用。所有 Key 共享总请求次数上限。
 
-不要把密钥贴进聊天、命令参数或公开仓库。源码、安装包不含预设密钥，`.env` 已被 Git 忽略。
-
-检查环境与配置，不调用接口：
-
-```bash
-node ~/.agents/skills/fangxin-image-gen/scripts/generate.mjs --doctor
-```
-
-Windows 将路径换成实际安装目录，例如 `C:\Users\用户名\.agents\skills\fangxin-image-gen\scripts\generate.mjs`。以下命令默认在 Skill 根目录运行。
+高级编辑协议：`IMAGE_API_EDIT_FORMAT=json|multipart`；multipart 文件字段 `IMAGE_API_IMAGE_FIELD=image|image[]`。已知 TTAPI 默认 JSON 图片引用，放心默认 multipart image，其他服务默认 multipart image[]，仍以服务商文档及实际测试为准。
 
 ## 自然语言使用
 
-选择「放心画图」，或输入 `$fangxin-image-gen`，描述需求：
+选择「GPT画图」，或输入 `$gpthuatu`，描述需求：
 
 > 画一张极简风格红色纸飞机海报，奶油色背景，横版。
 >
@@ -145,7 +172,7 @@ node scripts/generate.mjs --prompt "晴天街景" --output-format jpeg --output-
 | --image | 无 | 可重复最多 16 张；单张小于 50 MiB，合计≤100 MiB |
 | --mask | 无 | 同尺寸 PNG 遮罩，透明区域需要编辑 |
 | --input-fidelity | 省略 | 仅可调旧模型使用；Flare/2 请省略 |
-| --outdir | ./outputs/fangxin-image-gen | 相对于当前工作目录；结果输出绝对路径 |
+| --outdir | ./outputs/gpthuatu | 相对于当前工作目录；结果输出绝对路径 |
 | --transport | node | curl 为显式备用通道；SOCKS 使用 curl |
 | --timeout | 420 秒 | 单次请求上限 |
 | --connect-timeout | 15 秒 | 连接阶段上限 |

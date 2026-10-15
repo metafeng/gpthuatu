@@ -6,7 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import codecs from '../vendor/image-codecs.cjs';
 import { normalizeOptions } from '../src/options.mjs';
-import { loadConfig } from '../src/config.mjs';
+import { loadConfig, normalizeBaseUrl, providerSettings } from '../src/config.mjs';
 import { inspectImage, decodeBase64, applyMask } from '../src/images.mjs';
 import { generate, multipart, retryDelay } from '../src/generate.mjs';
 import { requestNode, requestCurl, proxyFor } from '../src/network.mjs';
@@ -238,4 +238,75 @@ test('proxy bypass works for exact, suffix, port and IPv6 host rules', () => {
   assert.equal(proxyFor(new URL('https://localhost:443'), { HTTPS_PROXY: 'http://proxy:8080', NO_PROXY: 'localhost:443' }), null);
   assert.equal(proxyFor(new URL('http://[::1]:8080'), { HTTP_PROXY: 'http://proxy:8080', NO_PROXY: '[::1]:8080' }), null);
   assert.throws(() => proxyFor(new URL('https://example.com'), { HTTPS_PROXY: 'socks5://proxy:1080' }), { code: 'CONFIG_ERROR' });
+});
+
+test('generic provider configuration normalizes URLs and isolates legacy credentials', async t => {
+  const root = await temp(t);
+  await fs.writeFile(path.join(root, '.env'), 'FANGXIN_API_KEY=old-service-key\nFANGXIN_MODEL=gpt-image-1\n');
+  const changed = await loadConfig({ IMAGE_API_BASE_URL:'https://api.ttapi.io/v1/images/generations' },root);
+  assert.equal(changed.apiBaseUrl,'https://api.ttapi.io/v1');
+  assert.equal(changed.authType,'api-key');
+  assert.equal(changed.apiKeyHeader,'TT-API-KEY');
+  assert.equal(changed.model,'gpt-image-2.5-flare');
+  assert.deepEqual(changed.keys,[]);
+  const generic = await loadConfig({ IMAGE_API_BASE_URL:'https://example.com/custom/v1/',
+    IMAGE_API_KEY:'new-service-key', IMAGE_API_KEY10:'ten', IMAGE_API_KEY2:'two' },root);
+  assert.deepEqual(generic.keys,['new-service-key','two','ten']);
+  assert.equal(generic.authType,'bearer');
+  assert.equal(generic.imageField,'image[]');
+  assert.equal(generic.editFormat,'multipart');
+  assert.equal(normalizeBaseUrl('https://api.ttapi.io'),'https://api.ttapi.io/v1');
+  assert.equal(normalizeBaseUrl('https://example.com/custom/images/edits/'),'https://example.com/custom');
+  for (const url of ['http://example.com/v1','https://user:pass@example.com/v1','https://example.com/v1?key=private','https://example.com/v1#key','not a URL']) {
+    assert.throws(()=>normalizeBaseUrl(url),{code:'CONFIG_ERROR'});
+  }
+  assert.throws(()=>providerSettings({IMAGE_API_AUTH_TYPE:'guess'}),{code:'CONFIG_ERROR'});
+  assert.throws(()=>providerSettings({IMAGE_API_KEY_HEADER:'Host'}),{code:'CONFIG_ERROR'});
+  assert.throws(()=>providerSettings({IMAGE_API_KEY_HEADER:'X-Key\r\nBad: 1'}),{code:'CONFIG_ERROR'});
+});
+
+test('TTAPI routes through configured URL and header without leaking keys to returned image URLs',async t => {
+  const dir=await temp(t);
+  const loaded=await loadConfig({IMAGE_API_BASE_URL:'https://api.ttapi.io/v1/images/generations',IMAGE_API_KEY:'test-ttapi-only'},dir);
+  let calls=0;
+  const result=await generate(options({outdir:dir}),loaded,{request:async(url,request)=>{
+    calls++;
+    if (calls===1) {
+      assert.equal(url,'https://api.ttapi.io/v1/images/generations');
+      assert.equal(request.headers['TT-API-KEY'],'test-ttapi-only');
+      assert.equal(request.headers.Authorization,undefined);
+      assert.equal(JSON.parse(request.body).model,'gpt-image-2.5-flare');
+      return response(200,{data:[{url:'https://cdn.example.com/image.png?token=private'}]});
+    }
+    assert.equal(url,'https://cdn.example.com/image.png?token=private');
+    assert.equal(request.headers,undefined);
+    return {status:200,headers:{},body:png()};
+  }});
+  assert.equal(calls,2);
+  assert.equal(result.provider,'ttapi');
+  const text=await fs.readFile(result.manifest,'utf8');
+  assert.ok(!text.includes('test-ttapi-only'));
+  assert.ok(!text.includes('token=private'));
+});
+
+test('editing follows JSON references for TTAPI and multipart image[] for other compatible services',async t => {
+  const dir=await temp(t),file=path.join(dir,'input.png'),mask=path.join(dir,'mask.png');
+  await fs.writeFile(file,png()); await fs.writeFile(mask,png(true));
+  const tt=await loadConfig({IMAGE_API_BASE_URL:'https://api.ttapi.io/v1',IMAGE_API_KEY:'fixture-tt'},dir);
+  await generate(options({outdir:dir,image:[file],mask}),tt,{request:async(url,request)=>{
+    assert.equal(url,'https://api.ttapi.io/v1/images/edits');
+    assert.equal(request.headers['Content-Type'],'application/json');
+    const body=JSON.parse(request.body);
+    assert.ok(body.images[0].image_url.startsWith('data:image/png;base64,'));
+    assert.equal(inspectImage(Buffer.from(body.mask.image_url.split(',')[1],'base64')).hasTransparency,true);
+    return response();
+  }});
+  const generic=await loadConfig({IMAGE_API_BASE_URL:'https://example.com/v1',IMAGE_API_KEY:'fixture-custom'},dir);
+  await generate(options({outdir:dir,image:[file]}),generic,{request:async(url,request)=>{
+    assert.equal(url,'https://example.com/v1/images/edits');
+    assert.equal(request.headers.Authorization,'Bearer fixture-custom');
+    assert.ok(request.headers['Content-Type'].startsWith('multipart/form-data; boundary='));
+    assert.ok(request.body.toString().includes('name="image[]"'));
+    return response();
+  }});
 });

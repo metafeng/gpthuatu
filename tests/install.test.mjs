@@ -27,21 +27,23 @@ test('installation preview has no side effects', async t => {
   const plan = await install({ source, home, dryRun: true });
   assert.equal(plan.configPreserved, true);
   await fs.access(old);
-  assert.equal(plan.canonical, old);
+  assert.equal(plan.canonical, path.join(home, '.agents', 'skills', 'gpthuatu'));
   assert.equal(await fs.readFile(path.join(old, 'SKILL.md'), 'utf8'), '---\nname: fangxin-image-gen\n---\nold version');
   await assert.rejects(fs.access(path.join(home, '.agents', 'skill-backups')));
 });
 
-test('update keeps the original identity, config, recoverable backups and one shared skill', async t => {
+test('legacy installation becomes gpthuatu with config, recoverable backups and one shared skill', async t => {
   const { home, old } = await fixture(t);
   const result = await install({ source, home });
-  assert.equal(result.canonical, old);
-  assert.match(await fs.readFile(path.join(old, 'SKILL.md'), 'utf8'), /^name: fangxin-image-gen$/m);
+  assert.equal(result.canonical, path.join(home, '.agents', 'skills', 'gpthuatu'));
+  assert.match(await fs.readFile(path.join(result.canonical, 'SKILL.md'), 'utf8'), /^name: gpthuatu$/m);
+  await assert.rejects(fs.access(old));
   assert.equal(await fs.readFile(path.join(result.canonical, '.env'), 'utf8'), 'FANGXIN_API_KEY=fixture-private\n');
   if (process.platform !== 'win32') assert.equal((await fs.stat(path.join(result.canonical, '.env'))).mode & 0o777, 0o600);
   for (const agent of ['codex', 'claude']) {
     await assert.rejects(fs.access(path.join(home, `.${agent}`, 'skills', 'fangxin-draw')));
-    assert.equal(await fs.realpath(path.join(home, `.${agent}`, 'skills', 'fangxin-image-gen')), await fs.realpath(result.canonical));
+    await assert.rejects(fs.access(path.join(home, `.${agent}`, 'skills', 'fangxin-image-gen')));
+    assert.equal(await fs.realpath(path.join(home, `.${agent}`, 'skills', 'gpthuatu')), await fs.realpath(result.canonical));
   }
   const record = JSON.parse(await fs.readFile(path.join(result.backupRoot, 'restore.json'), 'utf8'));
   const saved = record.moved.find(x => x.original === old);
@@ -87,10 +89,10 @@ test('self-install keeps a clone and refreshes aliases without removing the sour
   const result = await install({ source: first.canonical, home });
   assert.equal(await fs.realpath(result.canonical), await fs.realpath(first.canonical));
   await fs.access(path.join(first.canonical, 'src', 'cli.mjs'));
-  assert.equal(await fs.realpath(path.join(home, '.codex', 'skills', 'fangxin-image-gen')), await fs.realpath(first.canonical));
+  assert.equal(await fs.realpath(path.join(home, '.codex', 'skills', 'gpthuatu')), await fs.realpath(first.canonical));
 });
 
-test('temporary renamed installations return to the original identity without losing config', async t => {
+test('temporary renamed installations migrate to gpthuatu without losing config', async t => {
   const { home, old } = await fixture(t);
   const temporary = path.join(home, '.agents', 'skills', 'fangxin-draw');
   await fs.rename(old, temporary);
@@ -101,11 +103,12 @@ test('temporary renamed installations return to the original identity without lo
     await fs.symlink(temporary, path.join(dir, 'fangxin-draw'), process.platform === 'win32' ? 'junction' : 'dir');
   }
   const result = await install({ source, home });
-  assert.equal(result.canonical, old);
+  assert.equal(result.canonical, path.join(home, '.agents', 'skills', 'gpthuatu'));
   await assert.rejects(fs.access(temporary));
-  assert.equal(await fs.readFile(path.join(old, '.env'), 'utf8'), 'FANGXIN_API_KEY=fixture-private\n');
+  assert.equal(await fs.readFile(path.join(result.canonical, '.env'), 'utf8'), 'FANGXIN_API_KEY=fixture-private\n');
   for (const agent of ['codex', 'claude']) {
     await assert.rejects(fs.access(path.join(home, `.${agent}`, 'skills', 'fangxin-draw')));
-    assert.equal(await fs.realpath(path.join(home, `.${agent}`, 'skills', 'fangxin-image-gen')), await fs.realpath(old));
+    await assert.rejects(fs.access(path.join(home, `.${agent}`, 'skills', 'fangxin-image-gen')));
+    assert.equal(await fs.realpath(path.join(home, `.${agent}`, 'skills', 'gpthuatu')), await fs.realpath(result.canonical));
   }
 });

@@ -3,11 +3,10 @@ import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { requestNode, requestCurl } from './network.mjs';
 import { makeFields, expandPath } from './options.mjs';
-import { requireKeys } from './config.mjs';
+import { requireKeys, providerSettings } from './config.mjs';
 import { inspectImage, decodeBase64, convertFormat, applyMask } from './images.mjs';
 import { DrawError, redact } from './errors.mjs';
 
-const API_ROOT = 'https://fangxinapi.com/v1';
 const MAX_INPUT = 50 * 1024 * 1024;
 const MAX_COMBINED_INPUT = 100 * 1024 * 1024;
 const checkTime = deadline => {
@@ -57,8 +56,8 @@ async function inputImage(value, deadline, options, config, transport, signal, l
   return { bytes, metadata };
 }
 
-export function multipart(fields, images, mask) {
-  const boundary = `fangxin-${randomUUID()}`;
+export function multipart(fields, images, mask, imageField = 'image') {
+  const boundary = `gpthuatu-${randomUUID()}`;
   const parts = [];
   const append = (name, value, filename, type) => {
     parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"${filename ? `; filename="${filename}"` : ''}\r\n${type ? `Content-Type: ${type}\r\n` : ''}\r\n`));
@@ -66,8 +65,8 @@ export function multipart(fields, images, mask) {
     parts.push(Buffer.from('\r\n'));
   };
   for (const [name, value] of Object.entries(fields)) append(name, value);
-  // Fangxin uses repeated `image`, unlike OpenAI's multipart `image[]` examples.
-  for (const [index, image] of images.entries()) append('image', image.bytes,
+  // Keep each service's documented multipart field name.
+  for (const [index, image] of images.entries()) append(imageField, image.bytes,
     `image-${index + 1}.${image.metadata.format}`, `image/${image.metadata.format}`);
   if (mask) append('mask', mask.bytes, 'mask.png', 'image/png');
   parts.push(Buffer.from(`--${boundary}--\r\n`));
@@ -85,6 +84,7 @@ export function retryDelay(headers, attempt, now = Date.now()) {
 }
 
 export async function callProvider(options, config, payload, deadline, transport, progress, signal) {
+  const provider = { ...providerSettings(), ...config };
   let keyIndex = 0;
   const attempts = [];
   const endpoint = options.images.length ? 'images/edits' : 'images/generations';
@@ -95,9 +95,11 @@ export async function callProvider(options, config, payload, deadline, transport
     progress({ stage: 'request', attempt, maxAttempts: options.maxAttempts, keySlot: keyIndex + 1 });
     let response, delay, failure;
     try {
-      response = await transport(`${API_ROOT}/${endpoint}`, { method: 'POST',
-        headers: { Authorization: `Bearer ${config.keys[keyIndex]}`, 'Content-Type': payload.contentType,
-          'User-Agent': 'fangxin-image-gen-node', Accept: 'application/json' },
+      response = await transport(`${provider.apiBaseUrl}/${endpoint}`, { method: 'POST',
+        headers: { ...(provider.authType === 'api-key'
+          ? { [provider.apiKeyHeader]: config.keys[keyIndex] } : { Authorization: `Bearer ${config.keys[keyIndex]}` }),
+          'Content-Type': payload.contentType,
+          'User-Agent': 'gpthuatu-node', Accept: 'application/json' },
         body: payload.body, timeout: Math.min(options.timeout, deadline - performance.now()),
         connectTimeout: options.connectTimeout, env: config.env, signal });
     } catch (error) {
@@ -153,6 +155,7 @@ async function atomicWrite(file, bytes) {
 }
 
 export async function generate(options, config, { request, progress = () => {}, signal } = {}) {
+  config = { ...providerSettings(), ...config };
   const start = performance.now(), deadline = start + options.totalTimeout;
   const transport = request || (options.transport === 'curl' ? requestCurl : requestNode);
   const inputs = [];
@@ -171,12 +174,12 @@ export async function generate(options, config, { request, progress = () => {}, 
       throw new DrawError('INPUT_ERROR', '遮罩必须是小于 4 MiB 的 PNG，含透明编辑区域，且与第一张参考图尺寸相同。');
     }
   }
-  if (options.dryRun) return { success: true, dryRun: true, provider: 'fangxin', mode: inputs.length ? 'edit' : 'generate',
+  if (options.dryRun) return { success: true, dryRun: true, provider: config.provider, apiBaseUrl: config.apiBaseUrl, authType: config.authType, mode: inputs.length ? 'edit' : 'generate',
     model: options.model, requestedSize: options.size, quality: options.quality, format: options.format, background: options.background,
     imageCount: options.n, inputCount: inputs.length, promptCharacters: [...options.prompt].length,
     keysConfigured: config.keys.length, maxAttempts: options.maxAttempts, totalTimeoutSeconds: options.totalTimeout / 1000,
     transport: options.transport, outdir: options.outdir };
-  requireKeys(config);
+  requireKeys({ ...config, model: options.model });
   // Detect invalid or unwritable output locations before submitting a paid request.
   try {
     await fs.mkdir(options.outdir, { recursive: true, mode: 0o700 });
@@ -187,8 +190,12 @@ export async function generate(options, config, { request, progress = () => {}, 
     throw new DrawError('OUTPUT_PATH_ERROR', '输出目录无法写入，请检查 outdir 路径及权限；尚未提交出图请求。');
   }
   const fields = makeFields(options);
-  const payload = inputs.length ? multipart(fields, inputs, mask)
-    : { body: Buffer.from(JSON.stringify(fields)), contentType: 'application/json' };
+  const dataUrl = image => `data:image/${image.metadata.format};base64,${image.bytes.toString('base64')}`;
+  const payload = inputs.length && config.editFormat === 'multipart'
+    ? multipart(fields, inputs, mask, config.imageField)
+    : { body: Buffer.from(JSON.stringify(inputs.length ? { ...fields,
+      images: inputs.map(image => ({ image_url: dataUrl(image) })),
+      ...(mask ? { mask: { image_url: dataUrl(mask) } } : {}) } : fields)), contentType: 'application/json' };
   const response = await callProvider(options, config, payload, deadline, transport, progress, signal);
   progress({ stage: 'validate_output' });
   const entries = response.body?.data;
@@ -235,7 +242,7 @@ export async function generate(options, config, { request, progress = () => {}, 
     }
     if (options.background === 'transparent' && !info.hasTransparency) violations.push(`第 ${index + 1} 张没有实际透明区域。`);
   }
-  const result = { success: !violations.length, taskId, provider: 'fangxin', endpoint: response.endpoint,
+  const result = { success: !violations.length, taskId, provider: config.provider, apiBaseUrl: config.apiBaseUrl, endpoint: response.endpoint,
     mode: inputs.length ? 'edit' : 'generate', model: options.model,
     requestedSize: options.size, requestedQuality: options.quality, requestedFormat: options.format,
     requestedBackground: options.background, inputCount: inputs.length,

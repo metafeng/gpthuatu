@@ -29,7 +29,7 @@ export function safeError(error, secrets = []) {
     ...(error.uncertain ? { uncertain: true } : {}),
     ...(error.files ? { files: error.files } : {}),
     ...(error.manifest ? { manifest: error.manifest } : {}),
-    // Only this known public onboarding URL may bypass signed-URL redaction.
-    ...(error.setupUrl === 'https://fangxinapi.com/keys' ? { setupUrl: error.setupUrl } : {}),
+    // Only known public setup pages may bypass signed-URL redaction.
+    ...(['https://fangxinapi.com/keys', 'https://dashboard.ttapi.io', 'https://platform.openai.com/api-keys'].includes(error.setupUrl) ? { setupUrl: error.setupUrl } : {}),
   };
 }

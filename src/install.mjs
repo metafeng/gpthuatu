@@ -10,9 +10,8 @@ import { promisify } from 'node:util';
 import { loadConfig, keySetup } from './config.mjs';
 
 const SOURCE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const NAME = 'fangxin-image-gen';
-// Recognize the temporary renamed installation only for migration back to the original ID.
-const OLD = 'fangxin-draw';
+const NAME = 'gpthuatu';
+const LEGACY_NAMES = ['fangxin-image-gen', 'fangxin-draw'];
 const FILES = ['SKILL.md', 'README.md', 'agents', 'scripts', 'src', 'vendor', 'references', 'tests',
   'package.json', 'package-lock.json', '.github', '.gitignore', '.env.example'];
 async function stat(file) { try { return await fs.lstat(file); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } }
@@ -21,7 +20,7 @@ async function owned(file) {
   if (!info) return true;
   try {
     const text = await fs.readFile(path.join(file, 'SKILL.md'), 'utf8');
-    return /^name:\s*["']?(fangxin-image-gen|fangxin-draw|放心画图)["']?\s*$/m.test(text);
+    return /^name:\s*["']?(gpthuatu|fangxin-image-gen|fangxin-draw|放心画图|GPT画图)["']?\s*$/m.test(text);
   } catch { return false; }
 }
 async function exists(file) { return !!(await stat(file)); }
@@ -39,10 +38,10 @@ export async function install({ source = SOURCE, home = os.homedir(), agents = [
   agents = [...new Set(agents)];
   const canonical = path.resolve(target || path.join(home, '.agents', 'skills', NAME));
   if (!agents.every(x => ['codex', 'claude'].includes(x))) throw new Error('agents 只能为 codex、claude；其他 Agent 使用 --target 指定安装目录。');
-  const oldCanonical = path.join(home, '.agents', 'skills', OLD);
-  const nested = path.join(home, '.agents', 'skills', 'baoyu-danger-gemini-web', NAME);
-  const aliases = agents.flatMap(agent => [path.join(home, `.${agent}`, 'skills', OLD), path.join(home, `.${agent}`, 'skills', NAME)]);
-  const candidates = [...new Set([canonical, oldCanonical, nested, ...aliases])];
+  const legacyRoots = LEGACY_NAMES.map(name => path.join(home, '.agents', 'skills', name));
+  const nested = path.join(home, '.agents', 'skills', 'baoyu-danger-gemini-web', 'fangxin-image-gen');
+  const aliases = agents.flatMap(agent => [...LEGACY_NAMES, NAME].map(name => path.join(home, `.${agent}`, 'skills', name)));
+  const candidates = [...new Set([canonical, ...legacyRoots, nested, ...aliases])];
   const removals = [];
   const seenEntries = new Set();
   for (const file of candidates) {
@@ -53,22 +52,22 @@ export async function install({ source = SOURCE, home = os.homedir(), agents = [
     seenEntries.add(entry);
     // A dangling known alias is safe to back up, but arbitrary directories are never removed.
     if (!await owned(file)) {
-      if (!(info.isSymbolicLink() && [OLD, NAME].includes(path.basename(file)))) throw new Error(`安装目录中已有其他内容，停止替换：${file}`);
+      if (!(info.isSymbolicLink() && [...LEGACY_NAMES, NAME].includes(path.basename(file)))) throw new Error(`安装目录中已有其他内容，停止替换：${file}`);
       const link = await fs.readlink(file);
-      if (!/fangxin-(?:image-gen|draw)/.test(link)) throw new Error(`无法确认旧链接归属，停止替换：${file}`);
+      if (!/(?:gpthuatu|fangxin-(?:image-gen|draw))/.test(link)) throw new Error(`无法确认旧链接归属，停止替换：${file}`);
     }
     if (file === source && file === canonical && !replaceHomeSource) continue;
     removals.push({ path: file, symlink: info.isSymbolicLink() });
   }
   // Prefer the configuration from the existing canonical installation, then from its source.
-  const envCandidates = [...new Set([path.join(canonical, '.env'), path.join(oldCanonical, '.env'), path.join(source, '.env'),
+  const envCandidates = [...new Set([path.join(canonical, '.env'), ...legacyRoots.map(root => path.join(root, '.env')), path.join(source, '.env'),
     ...aliases.map(x => path.join(x, '.env')), path.join(nested, '.env')])];
   let envBytes, envOrigin;
   for (const file of envCandidates) {
     try { envBytes = await fs.readFile(file); envOrigin = file; break; } catch (e) { if (e.code !== 'ENOENT') throw e; }
   }
   // Legacy embedded keys are migrated into a private config file, never into the new source code.
-  if (!envBytes) for (const root of [canonical, oldCanonical, nested, source]) {
+  if (!envBytes) for (const root of [canonical, ...legacyRoots, nested, source]) {
     try {
       const legacy = await fs.readFile(path.join(root, 'scripts', 'generate.py'), 'utf8');
       const match = legacy.match(/DEFAULT_API_KEY\s*=\s*["']([^"'\r\n]+)["']/);
@@ -79,7 +78,7 @@ export async function install({ source = SOURCE, home = os.homedir(), agents = [
     // Validate before moving anything, then preserve the user's configuration verbatim.
     parseEnv(envBytes.toString('utf8'));
   }
-  const backupRoot = path.join(home, '.agents', 'skill-backups', `fangxin-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`);
+  const backupRoot = path.join(home, '.agents', 'skill-backups', `gpthuatu-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`);
   const plan = { success: true, dryRun, canonical, agents, backups: removals.map(x => x.path),
     configPreserved: !!envBytes, configOrigin: envOrigin === 'legacy-script' ? 'legacy-script' : envOrigin ? 'existing-config' : 'none',
     backupRoot: removals.length ? backupRoot : null };
@@ -87,7 +86,7 @@ export async function install({ source = SOURCE, home = os.homedir(), agents = [
 
   const parent = path.dirname(canonical);
   await fs.mkdir(parent, { recursive: true });
-  const staged = path.join(parent, `.fangxin-stage-${randomUUID()}`);
+  const staged = path.join(parent, `.gpthuatu-stage-${randomUUID()}`);
   await fs.mkdir(staged, { mode: 0o700 });
   const moved = [], linksCreated = [];
   let installed = false;
@@ -146,7 +145,7 @@ export async function main() {
   try {
     const { values } = parseArgs({ options: { agents: { type: 'string' }, target: { type: 'string' }, home: { type: 'string' },
       'dry-run': { type: 'boolean' }, help: { type: 'boolean' } } });
-    if (values.help) { console.log('node scripts/install.mjs [--agents codex,claude] [--target /path/to/skills/fangxin-image-gen] [--dry-run]\n自动备份旧版、保留配置，并安装放心画图。备份位于 ~/.agents/skill-backups/，不进入技能扫描目录。'); return; }
+    if (values.help) { console.log('node scripts/install.mjs [--agents codex,claude] [--target /path/to/skills/gpthuatu] [--dry-run]\n自动备份旧版、保留配置，并安装GPT画图。备份位于 ~/.agents/skill-backups/，不进入技能扫描目录。'); return; }
     console.log(JSON.stringify(await install({ home: values.home, target: values.target, agents: values.agents !== undefined ? values.agents.split(',').filter(Boolean) : ['codex', 'claude'], dryRun: values['dry-run'] }), null, 2));
   } catch (error) { console.error(`安装失败：${error.message}`); process.exitCode = 1; }
 }

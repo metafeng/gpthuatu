@@ -1,6 +1,8 @@
 # 接口兼容性
 
-仅调用 https://fangxinapi.com/v1/images/generations 和 /v1/images/edits。同名模型不等于第三方所有官方参数已验证。
+使用配置的 HTTPS 基础地址，拼接 `/images/generations` 或 `/images/edits`。完整生成链接会自动规范化；TTAPI 自动使用 TT-API-KEY，其他服务默认 Bearer，可显式配置专用请求头。只支持同步 OpenAI 兼容响应 `data[].b64_json` 或 `data[].url`，不把异步任务 ID 当成出图成功。
+
+TTAPI 的编辑接口按其 [OpenAPI 文档](https://docs.ttapi.io/openapi/en/openai.json) 使用 JSON images/image_url；放心使用 multipart image，其他服务默认 multipart image[]。认证、地址、JSON/multipart 和字段可配置；代码适配不代表所有服务商的编辑能力都已通过实测。同名模型不等于第三方所有官方参数已验证。
 
 | 能力 | 官方规则 | 本技能行为 |
 |---|---|---|
@@ -31,3 +33,12 @@
 | xhigh/max、4K、超过两张参考图、一次多张输出 | 未进行第三方实测 | 本地校验存在，未测组合不称为已验收 |
 
 未对 OpenAI 官方端点做收费测试；以上结果仅属于放心接口。
+
+## 后续实测：2026-10-15
+
+- 放心接口再次测试两个普通提示词，最终均返回 HTTP 477，上游提示任务失败或需审核；期间遇到两次 HTTP 429。此前成功不代表持续可用。
+- TTAPI 的 `/v1/images/generations`：同一风景提示词、gpt-image-2.5-flare、1024×1024 PNG，一次 HTTP 200，耗时 15.7 秒；完整解码与人工查看通过。该次复用了原 Skill 引擎，临时适配地址和认证。
+- 通用配置版本的单元测试验证地址规范化、认证选择、密钥隔离、JSON/multipart 编辑结构及返回验收；不以本地模拟测试替代真实服务商验收。
+- TTAPI 编辑、透明背景和多张输出尚未收费实测。单次文生图成功不构成长期稳定性保证。
+
+通用配置版直接运行实测：同一 TTAPI 接口、完整生成链接配置、默认认证自动识别，一次 HTTP 200，16.1 秒，1024×1024 PNG，完整解码与人工查看通过；未使用临时适配器。

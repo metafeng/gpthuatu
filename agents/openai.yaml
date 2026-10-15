@@ -1,6 +1,6 @@
 interface:
-  display_name: "放心画图"
-  short_description: "通过放心 API 生成、编辑和合成图片，自动验证结果，默认 Flare 模型"
-  default_prompt: "使用 $fangxin-image-gen，通过放心 API 生成或编辑图片，并检查图片结果。"
+  display_name: "GPT画图"
+  short_description: "配置接口链接和密钥即可生成、编辑和合成图片，自动检查结果，支持多种兼容服务"
+  default_prompt: "使用 $gpthuatu，通过我配置的图片 API 生成或编辑图片，并检查图片结果。"
 policy:
   allow_implicit_invocation: true

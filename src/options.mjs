@@ -36,12 +36,12 @@ export function normalizeOptions(v, config) {
   }
   const format = v['output-format'] ?? 'png';
   // Fangxin's WebP output compatibility is not established. Do not silently change formats.
-  choice(format, ['png', 'jpeg'], '放心接口 output-format（WebP 暂未开放）');
+  choice(format, ['png', 'jpeg'], 'output-format（WebP 暂未开放）');
   const background = v.background ?? 'auto';
   choice(background, ['auto', 'opaque', 'transparent'], 'background');
   if (background === 'transparent' && format === 'jpeg') fail('透明背景不能使用 JPEG，请选择 PNG。');
   if (background === 'transparent' && model.startsWith('gpt-image-2.5-flare') && !v.experimental) {
-    throw new DrawError('CAPABILITY_UNVERIFIED', '放心 Flare 透明背景尚未通过实测，默认不提交收费请求。确认需要试验时显式使用 --experimental。');
+    throw new DrawError('CAPABILITY_UNVERIFIED', 'Flare 透明背景尚未通过当前服务商实测，默认不提交收费请求。确认需要试验时显式使用 --experimental。');
   }
   if (format === 'png' && v['output-compression'] !== undefined) fail('output-compression 仅用于 JPEG；PNG 请省略此参数。');
   const compression = format === 'jpeg' ? integer(v['output-compression'] ?? 100, 0, 100, 'output-compression') : undefined;
@@ -68,7 +68,7 @@ export function normalizeOptions(v, config) {
     n: integer(v.n ?? 1, 1, 10, 'n'), images, mask: v.mask, inputFidelity: v['input-fidelity'],
     user: v.user, maxAttempts, timeout, connectTimeout, totalTimeout, transport,
     retryUncertain: v['retry-uncertain'] ?? false, strictSize: v['strict-size'] ?? false,
-    outdir: expandPath(v.outdir ?? './outputs/fangxin-image-gen'), json: v.json ?? false, dryRun: v['dry-run'] ?? false };
+    outdir: expandPath(v.outdir ?? './outputs/gpthuatu'), json: v.json ?? false, dryRun: v['dry-run'] ?? false };
 }
 
 export function makeFields(o) {
