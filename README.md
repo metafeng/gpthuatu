@@ -136,7 +136,29 @@ node scripts/generate.mjs --provider fangxin --doctor
 node scripts/generate.mjs --provider ttapi --prompt "一只晒太阳的小猫"
 ```
 
-默认服务商由 .env 中的 IMAGE_API_PROVIDER 决定；命令参数 --provider 优先级更高。明确选择后，只读取该家的命名 Key。未填写就提示补充，不会尝试另一家的 Key，也不会自动改用其他服务商。
+默认首选服务商由 .env 中的 IMAGE_API_PROVIDER 决定；命令参数 --provider 优先级更高。首选服务商只使用自己的命名 Key；未填写时提示补充。两家 Key 已配置时，运行中的明确失败可以触发下面的备用机制。
+
+### 放心与 TT 自动互为备用
+
+只要保存了 FANGXIN_API_KEY 和 TT_API_KEY，备用机制默认开启，不需要再填开关：
+
+- 首选放心时：放心持续失败 → 尝试 TT 出图。
+- 首选 TT 时：TT 持续失败 → 尝试放心出图。
+- 一次任务最多切换一次，默认设置不变；结果会显示实际使用的服务商。
+
+默认整个任务合计最多请求 3 次、共用 600 秒总时间，包含两家的所有 Key。首选服务最多先尝试 2 次，为备用留至少 1 次机会；明确的账号拒绝或过长的限流等待可以提前切换。不会分别给两家各重试 3 次，也不会来回循环。设置 --max-attempts 1 时不启用备用。
+
+可自动切换：401/402/404、持续限流 429、明确尚未提交的连接失败，以及 4xx 中以明确任务失败代码返回且不含审核信息的响应。不会自动切换：审核拒绝、403、普通参数错误、提交后断线、5xx 执行状态不明、成功响应异常、图片下载或验收失败。服务商的“失败或需要审核”这类混合提示也先停止，不能确定为普通故障。避免重复提交已经可能出图的任务。
+
+备用会使用该家的地址、Key 和上传协议，但保持本次模型、提示词及其他画图参数不变。只有一家的 Key 时照常使用这一家；OpenAI 官方和 custom 不自动加入这对备用服务。
+
+只想使用指定服务商，可对 AI 说“这次只用 TT，不要切换备用”，对应：
+
+```bash
+node scripts/generate.mjs --provider ttapi --no-fallback --prompt "一只晒太阳的小猫"
+```
+
+长期关闭时在私有 .env 中设置 IMAGE_API_FALLBACK=off；恢复设为 auto。--doctor 会显示 fallbackProvider；--dry-run 显示本次是否有备用机会。双向切换、总预算、编辑协议和不确定请求停止已通过本地模拟测试，不代表已对两家做收费故障演练。
 
 各家的模型可分别设置 FANGXIN_API_MODEL、TT_API_MODEL、OPENAI_API_MODEL；未填时使用 IMAGE_API_MODEL，再未填时使用默认模型。--model 可指定本次模型。放心的旧 FANGXIN_MODEL 仍兼容。
 
@@ -201,7 +223,8 @@ node scripts/generate.mjs --prompt "晴天街景" --output-format jpeg --output-
 | --timeout | 420 秒 | 单次请求上限 |
 | --connect-timeout | 15 秒 | 连接阶段上限 |
 | --total-timeout | 600 秒 | 含下载、等待、重试的总网络预算 |
-| --max-attempts | 3 | 全任务出图请求上限，所有密钥合计 |
+| --max-attempts | 3 | 全任务出图请求上限，所有服务商和密钥合计 |
+| --no-fallback | 关闭 | 本次只使用首选服务，不自动切换备用 |
 | --experimental | 关闭 | 显式试验尚未验收的 Flare 透明背景，仍校验真实透明区域 |
 | --strict-size | 关闭 | 实际尺寸不符则验收失败，仍保留有效图片 |
 | --json | 关闭 | stdout 输出一个 JSON 结果，进度写 stderr |
@@ -214,7 +237,7 @@ node scripts/generate.mjs --prompt "晴天街景" --output-format jpeg --output-
 
 完整解码每张图片，检查实际尺寸、真实格式、透明区域，不只因 HTTP 200 报告成功。随机任务编号避免同时调用覆盖文件。
 
-保存图片及 `result-任务编号.json`。记录请求参数、实际图片信息、脱敏请求编号、尝试次数、耗时和 SHA-256，不记录密钥、提示词原文或带授权参数的图片链接。上游格式不符时本地转码并保留原图；透明 PNG 转 JPEG 使用白底。遮罩编辑会按遮罩本地合成，使未选中区域保留参考图像素；JPEG 导出仍有有损压缩。
+保存图片及 `result-任务编号.json`。记录首选及实际服务商、备用切换、请求参数、实际图片信息、脱敏请求编号、尝试次数、耗时和 SHA-256，不记录密钥、提示词原文或带授权参数的图片链接。上游格式不符时本地转码并保留原图；透明 PNG 转 JPEG 使用白底。遮罩编辑会按遮罩本地合成，使未选中区域保留参考图像素；JPEG 导出仍有有损压缩。
 
 尺寸不符时保存并提醒；硬性尺寸要求使用 --strict-size。格式、透明区域、数量或解码不符合要求时返回失败，保留能解码的图片供检查。
 
@@ -239,7 +262,7 @@ node scripts/generate.mjs --verify /path/image.png
 - 提交前连接错误：可在预算内重试。
 - 已提交后超时、中断或 5xx：执行状态不确定，默认停止，先检查服务商记录，避免重复扣费。
 
-只有接受可能重复提交时才显式增加 --retry-uncertain。不会自动切模型、切服务商或在不确定状态下换通道重发。
+只有接受可能重复提交时才显式增加 --retry-uncertain。不会自动切模型，也不会在出现执行状态不确定的请求后跨服务或换通道重发；明确失败时的双向备用遵循上面的规则。
 
 默认模式支持 HTTP/HTTPS 代理和 NO_PROXY。SOCKS 使用已有 curl：
 

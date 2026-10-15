@@ -14,6 +14,7 @@ node scripts/generate.mjs --prompt "背景换成海边" --image /path/photo.png
 --prompt TEXT                  提示词（必填，最多 32000 字符）
 --model NAME                   默认 gpt-image-2.5-flare
 --provider NAME                本次使用 fangxin/ttapi/openai/custom，不改默认配置
+--no-fallback                  本次只使用所选服务商，不自动切换备用
 --image PATH_OR_HTTPS_URL       参考图；可重复，最多 16 张 PNG/JPEG
 --mask PATH_OR_HTTPS_URL        PNG 遮罩，与第一张参考图同尺寸，透明处编辑
 --size SIZE                    auto 或 WIDTHxHEIGHT；默认 auto
@@ -28,7 +29,7 @@ node scripts/generate.mjs --prompt "背景换成海边" --image /path/photo.png
 --timeout SECONDS              单次请求上限，默认 420
 --connect-timeout SECONDS      连接上限，默认 15
 --total-timeout SECONDS        全任务网络预算，默认 600
---max-attempts NUMBER          全任务请求次数上限，默认 3（所有密钥合计）
+--max-attempts NUMBER          全任务请求次数上限，默认 3（所有服务商和密钥合计）
 --transport node|curl          默认 node；curl 是显式选择的备用通道
 --retry-uncertain              允许重发执行状态不确定的请求，可能重复扣费
 --strict-size                  尺寸不匹配时验收失败，并保留已出图片
@@ -51,7 +52,7 @@ export async function main(argv = process.argv.slice(2)) {
       'n', 'moderation', 'input-fidelity', 'style', 'outdir', 'timeout', 'connect-timeout', 'total-timeout',
       'max-attempts', 'retries', 'transport', 'user', 'mask', 'verify'];
     const options = Object.fromEntries(stringNames.map(name => [name, { type: 'string' }]));
-    for (const name of ['help', 'json', 'dry-run', 'doctor', 'retry-uncertain', 'strict-size', 'experimental']) options[name] = { type: 'boolean' };
+    for (const name of ['help', 'json', 'dry-run', 'doctor', 'retry-uncertain', 'no-fallback', 'strict-size', 'experimental']) options[name] = { type: 'boolean' };
     options.image = { type: 'string', multiple: true };
     ({ values } = parseArgs({ args: argv, options, strict: true, allowPositionals: false }));
     if (values.help) { console.log(HELP); return; }
@@ -61,6 +62,8 @@ export async function main(argv = process.argv.slice(2)) {
         model: values.model || config.model, provider: config.provider, apiBaseUrl: config.apiBaseUrl,
         authType: config.authType, apiKeyHeader: config.authType === 'api-key' ? config.apiKeyHeader : 'Authorization',
         editFormat: config.editFormat, keyVariable: `${config.keyNamespace}_API_KEY`, keysConfigured: config.keys.length, envFile: config.envFile,
+        fallbackProvider: !values['no-fallback'] && config.fallback ? config.fallback.provider : null,
+        ...(config.fallbackWarning ? { fallbackWarning: config.fallbackWarning } : {}),
         nativeTransport: true, codecsBundled: true,
         ...(!config.keys.length ? { keySetup: keySetup(config) } : {}) }, null, 2));
       return;
@@ -79,6 +82,7 @@ export async function main(argv = process.argv.slice(2)) {
       else if (event.stage === 'validate_output') console.error('接口已返回，正在完整解码并检查图片…');
       else if (event.stage === 'waiting') console.error('仍在等待接口返回…');
       else if (event.stage === 'retry') console.error(`接口返回 ${event.status}，按重试预算处理…`);
+      else if (event.stage === 'fallback') console.error(`${event.from} 本次未能出图，正在切换备用服务 ${event.to}…`);
     };
     const heartbeat = setInterval(() => progress({ stage: 'waiting' }), 20000);
     heartbeat.unref();
@@ -87,13 +91,13 @@ export async function main(argv = process.argv.slice(2)) {
     finally { clearInterval(heartbeat); }
     if (values.json || normalized.dryRun) console.log(JSON.stringify(result, null, 2));
     else {
-      console.log(`模型：${result.model} | 请求尺寸：${result.requestedSize} | 耗时：${result.elapsedSeconds} 秒`);
+      console.log(`服务商：${result.provider} | 模型：${result.model} | 请求尺寸：${result.requestedSize} | 耗时：${result.elapsedSeconds} 秒`);
       for (const [index, file] of result.files.entries()) console.log(`[${index + 1}/${result.files.length}] ${file.path}\n  实际尺寸：${file.size} | 格式：${file.format} | 透明区域：${file.hasTransparency ? '有' : '无'}`);
       for (const warning of result.warnings) console.log(`提醒：${warning}`);
       console.log(`结果记录：${result.manifest}`);
     }
   } catch (error) {
-    const result = safeError(error, config?.keys);
+    const result = safeError(error, [...(config?.keys || []), ...(config?.fallback?.keys || [])]);
     if (values.json || argv.includes('--json')) console.log(JSON.stringify(result, null, 2));
     else console.error(`${result.code}：${result.message}${result.setupUrl ? `\n获取画图分组 Key：${result.setupUrl}` : ''}${result.manifest ? `\n结果记录：${result.manifest}` : ''}`);
     process.exitCode = error.code === 'INPUT_ERROR' || error.code?.startsWith('ERR_PARSE_ARGS') ? 4 : error.code === 'CONFIG_ERROR' ? 2 : 1;

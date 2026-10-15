@@ -83,16 +83,18 @@ export function retryDelay(headers, attempt, now = Date.now()) {
   return Math.min(30000, 1000 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 500);
 }
 
-export async function callProvider(options, config, payload, deadline, transport, progress, signal) {
+export async function callProvider(options, config, payload, deadline, transport, progress, signal,
+  budget = { used: 0, attempts: [], routeLimit: options.maxAttempts }) {
   const provider = { ...providerSettings(), ...config };
   let keyIndex = 0;
-  const attempts = [];
+  const attempts = budget.attempts;
   const endpoint = options.images.length ? 'images/edits' : 'images/generations';
-  for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
+  for (let localAttempt = 1; localAttempt <= budget.routeLimit && budget.used < options.maxAttempts; localAttempt++) {
     checkTime(deadline);
     if (signal?.aborted) throw new DrawError('CANCELLED', '任务已取消。');
+    const attempt = ++budget.used;
     const started = performance.now();
-    progress({ stage: 'request', attempt, maxAttempts: options.maxAttempts, keySlot: keyIndex + 1 });
+    progress({ stage: 'request', provider: provider.provider, attempt, maxAttempts: options.maxAttempts, keySlot: keyIndex + 1 });
     let response, delay, failure;
     try {
       response = await transport(`${provider.apiBaseUrl}/${endpoint}`, { method: 'POST',
@@ -103,18 +105,20 @@ export async function callProvider(options, config, payload, deadline, transport
         body: payload.body, timeout: Math.min(options.timeout, deadline - performance.now()),
         connectTimeout: options.connectTimeout, env: config.env, signal });
     } catch (error) {
-      attempts.push({ attempt, keySlot: keyIndex + 1, durationMs: Math.round(performance.now() - started), code: error.code || 'NETWORK_ERROR' });
+      attempts.push({ attempt, provider: provider.provider, keySlot: keyIndex + 1, durationMs: Math.round(performance.now() - started), code: error.code || 'NETWORK_ERROR' });
       if (signal?.aborted) throw new DrawError('CANCELLED', '任务已取消；已提交的请求可能仍在服务端处理。', { attempts: attempt, uncertain: !!error.submitted });
       const uncertain = !!error.submitted;
+      if (uncertain) budget.uncertain = true;
       if (uncertain && !options.retryUncertain) throw new DrawError('AMBIGUOUS_REQUEST',
         '请求已提交但未收到完整结果，无法确认是否已出图或扣费；本次停止自动重发。请先检查服务商记录。', { attempts: attempt, uncertain: true });
       if (error.code === 'CONFIG_ERROR' || error.code === 'INPUT_ERROR' || error.code === 'PROXY_ERROR' || error.code === 'RESPONSE_TOO_LARGE') throw error;
-      failure = new DrawError(error.code || 'NETWORK_ERROR', redact(error.message, config.keys), { attempts: attempt, uncertain });
+      failure = new DrawError(error.code || 'NETWORK_ERROR', redact(error.message, config.keys),
+        { attempts: attempt, uncertain, fallbackSafe: error.submitted === false });
       delay = retryDelay({}, attempt);
     }
     if (response) {
       const requestId = response.headers['x-request-id'] || response.headers['request-id'];
-      attempts.push({ attempt, keySlot: keyIndex + 1, durationMs: Math.round(performance.now() - started), status: response.status,
+      attempts.push({ attempt, provider: provider.provider, keySlot: keyIndex + 1, durationMs: Math.round(performance.now() - started), status: response.status,
         ...(requestId ? { requestId: redact(requestId, config.keys) } : {}) });
       let body;
       try { body = JSON.parse(response.body.toString('utf8')); } catch {
@@ -129,7 +133,13 @@ export async function callProvider(options, config, payload, deadline, transport
       if (response.status >= 200 && response.status < 300 && !body.error) return { body, attempts, requestId, endpoint };
       const code = body?.error?.code || 'HTTP_ERROR';
       const message = redact(body?.error?.message || `接口返回 HTTP ${response.status}。`, config.keys);
-      failure = new DrawError('PROVIDER_ERROR', message, { status: response.status, requestId, attempts: attempt });
+      const policy = /moderation|safety|content[_ -]?(policy|filter)|审核|审查|违规|安全策略|内容限制/i.test(`${code} ${message}`);
+      const definitiveFailure = response.status >= 400 && response.status < 500
+        && ['upstream_task_failed', 'image_generation_failed', 'task_failed'].includes(code);
+      failure = new DrawError('PROVIDER_ERROR', message, { status: response.status, requestId, attempts: attempt,
+        fallbackSafe: !policy && ([401, 402, 404, 429].includes(response.status) || definitiveFailure) });
+      if (response.status >= 500) budget.uncertain = true;
+      if (policy) throw failure;
       if (response.status === 401 && keyIndex + 1 < config.keys.length) {
         keyIndex++; delay = 0;
       } else if (response.status === 429) delay = retryDelay(response.headers, attempt);
@@ -140,9 +150,13 @@ export async function callProvider(options, config, payload, deadline, transport
         // 403 may be a policy or permission error; rotating credentials is not a remedy.
         throw failure;
       }
-      progress({ stage: 'retry', reason: redact(code, config.keys), status: response.status, nextAttempt: attempt + 1 });
+      if (localAttempt < budget.routeLimit && attempt < options.maxAttempts) {
+        progress({ stage: 'retry', provider: provider.provider, reason: redact(code, config.keys), status: response.status, nextAttempt: attempt + 1 });
+      }
     }
-    if (attempt >= options.maxAttempts) throw failure;
+    if (localAttempt >= budget.routeLimit || attempt >= options.maxAttempts) throw failure;
+    // Retry-After restricts this provider; a configured backup may be tried without waiting on it.
+    if (budget.allowFallback && failure.fallbackSafe && delay > 30000) throw failure;
     if (delay >= deadline - performance.now()) throw new DrawError('TOTAL_TIMEOUT', '剩余总时间不足以等待下一次请求。', { attempts: attempt });
     await sleep(delay, signal);
   }
@@ -156,6 +170,9 @@ async function atomicWrite(file, bytes) {
 
 export async function generate(options, config, { request, progress = () => {}, signal } = {}) {
   config = { ...providerSettings(), ...config };
+  const initialProvider = config.provider;
+  const backup = options.fallback !== false && config.fallback?.keys?.length ? config.fallback : null;
+  const secrets = [...config.keys, ...(backup?.keys || [])];
   const start = performance.now(), deadline = start + options.totalTimeout;
   const transport = request || (options.transport === 'curl' ? requestCurl : requestNode);
   const inputs = [];
@@ -177,7 +194,7 @@ export async function generate(options, config, { request, progress = () => {}, 
   if (options.dryRun) return { success: true, dryRun: true, provider: config.provider, apiBaseUrl: config.apiBaseUrl, authType: config.authType, mode: inputs.length ? 'edit' : 'generate',
     model: options.model, requestedSize: options.size, quality: options.quality, format: options.format, background: options.background,
     imageCount: options.n, inputCount: inputs.length, promptCharacters: [...options.prompt].length,
-    keysConfigured: config.keys.length, maxAttempts: options.maxAttempts, totalTimeoutSeconds: options.totalTimeout / 1000,
+    keysConfigured: config.keys.length, fallbackProvider: options.maxAttempts > 1 ? backup?.provider || null : null, maxAttempts: options.maxAttempts, totalTimeoutSeconds: options.totalTimeout / 1000,
     transport: options.transport, outdir: options.outdir };
   requireKeys({ ...config, model: options.model });
   // Detect invalid or unwritable output locations before submitting a paid request.
@@ -191,17 +208,44 @@ export async function generate(options, config, { request, progress = () => {}, 
   }
   const fields = makeFields(options);
   const dataUrl = image => `data:image/${image.metadata.format};base64,${image.bytes.toString('base64')}`;
-  const payload = inputs.length && config.editFormat === 'multipart'
-    ? multipart(fields, inputs, mask, config.imageField)
+  const payloadFor = provider => inputs.length && provider.editFormat === 'multipart'
+    ? multipart(fields, inputs, mask, provider.imageField)
     : { body: Buffer.from(JSON.stringify(inputs.length ? { ...fields,
       images: inputs.map(image => ({ image_url: dataUrl(image) })),
       ...(mask ? { mask: { image_url: dataUrl(mask) } } : {}) } : fields)), contentType: 'application/json' };
-  const response = await callProvider(options, config, payload, deadline, transport, progress, signal);
+  const budget = { used: 0, attempts: [],
+    routeLimit: backup && options.maxAttempts > 1 ? Math.min(2, options.maxAttempts - 1) : options.maxAttempts,
+    allowFallback: !!backup && options.maxAttempts > 1 };
+  let response, failover;
+  try {
+    try {
+      response = await callProvider(options, config, payloadFor(config), deadline, transport, progress, signal, budget);
+    } catch (error) {
+      if (!backup || !error.fallbackSafe || error.uncertain || budget.uncertain || signal?.aborted
+        || budget.used >= options.maxAttempts || performance.now() >= deadline) throw error;
+      failover = { from: initialProvider, to: backup.provider, reason: error.code,
+        ...(error.status ? { status: error.status } : {}) };
+      progress({ stage: 'fallback', ...failover });
+      config = { ...backup };
+      budget.routeLimit = options.maxAttempts - budget.used;
+      budget.allowFallback = false;
+      response = await callProvider(options, config, payloadFor(config), deadline, transport, progress, signal, budget);
+    }
+  } catch (error) {
+    error.provider = config.provider;
+    error.initialProvider = initialProvider;
+    error.attemptLog = budget.attempts;
+    if (budget.uncertain) error.uncertain = true;
+    if (failover) error.failover = failover;
+    throw error;
+  }
   progress({ stage: 'validate_output' });
   const entries = response.body?.data;
   if (!Array.isArray(entries) || !entries.length || entries.length > 10) throw new DrawError('INVALID_RESPONSE',
-    '接口未返回有效的图片列表；停止自动重发，请检查服务商记录。', { uncertain: true, requestId: response.requestId });
-  const files = [], warnings = [], violations = [];
+    '接口未返回有效的图片列表；停止自动重发，请检查服务商记录。',
+    { uncertain: true, requestId: response.requestId, provider: config.provider, initialProvider,
+      ...(failover ? { failover } : {}), attemptLog: budget.attempts });
+  const files = [], warnings = config.fallbackWarning ? [config.fallbackWarning] : [], violations = [];
   if (entries.length !== options.n) violations.push(`请求 ${options.n} 张，实际返回 ${entries.length} 张。`);
   const taskId = randomUUID();
   for (const [index, entry] of entries.entries()) {
@@ -211,7 +255,7 @@ export async function generate(options, config, { request, progress = () => {}, 
       else if (typeof entry?.url === 'string') bytes = await remoteImage(entry.url, deadline, options, config, transport, signal, MAX_INPUT);
       else throw new DrawError('INVALID_RESPONSE', '缺少 Base64 图片内容或图片链接。');
       info = inspectImage(bytes);
-    } catch (error) { violations.push(`第 ${index + 1} 张：${redact(error.message, config.keys)}`); continue; }
+    } catch (error) { violations.push(`第 ${index + 1} 张：${redact(error.message, secrets)}`); continue; }
     const providerInfo = { ...info };
     let sourcePath;
     const localProcessing = [];
@@ -242,11 +286,12 @@ export async function generate(options, config, { request, progress = () => {}, 
     }
     if (options.background === 'transparent' && !info.hasTransparency) violations.push(`第 ${index + 1} 张没有实际透明区域。`);
   }
-  const result = { success: !violations.length, taskId, provider: config.provider, apiBaseUrl: config.apiBaseUrl, endpoint: response.endpoint,
+  const result = { success: !violations.length, taskId, initialProvider, provider: config.provider,
+    ...(failover ? { failover } : {}), apiBaseUrl: config.apiBaseUrl, endpoint: response.endpoint,
     mode: inputs.length ? 'edit' : 'generate', model: options.model,
     requestedSize: options.size, requestedQuality: options.quality, requestedFormat: options.format,
     requestedBackground: options.background, inputCount: inputs.length,
-    ...(response.requestId ? { requestId: redact(response.requestId, config.keys) } : {}),
+    ...(response.requestId ? { requestId: redact(response.requestId, secrets) } : {}),
     transport: options.transport, elapsedSeconds: Math.round((performance.now() - start) / 100) / 10,
     attempts: response.attempts, files, warnings, ...(violations.length ? { violations } : {}),
     // Do not store prompt text, keys, source URLs, signed URLs or raw upstream responses.
@@ -255,7 +300,8 @@ export async function generate(options, config, { request, progress = () => {}, 
   result.manifest = manifest;
   await atomicWrite(manifest, JSON.stringify(result, null, 2) + '\n');
   if (violations.length) throw new DrawError('OUTPUT_VALIDATION_FAILED',
-    `图片验收未通过：${violations.join(' ')} 已保留可正常解码的图片和结果记录。`, { files, manifest });
+    `图片验收未通过：${violations.join(' ')} 已保留可正常解码的图片和结果记录。`,
+    { files, manifest, provider: config.provider, initialProvider, ...(failover ? { failover } : {}) });
   progress({ stage: 'complete', count: files.length });
   return result;
 }

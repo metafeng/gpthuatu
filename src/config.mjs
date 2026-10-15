@@ -112,7 +112,21 @@ export async function loadConfig(env = process.env, root = ROOT, providerOverrid
   const keys = readKeys(values, keyNamespace);
   const model = (keyNamespace !== 'IMAGE' && values[`${keyNamespace}_API_MODEL`]?.trim())
     || (keyNamespace === 'FANGXIN' && values.FANGXIN_MODEL?.trim()) || values.IMAGE_API_MODEL?.trim() || DEFAULT_MODEL;
-  return { keys, model, keyNamespace, envFile, env: values, ...settings };
+  const fallbackMode = values.IMAGE_API_FALLBACK?.trim() || 'auto';
+  if (!['auto', 'off'].includes(fallbackMode)) fail('IMAGE_API_FALLBACK 必须为 auto 或 off。');
+  let fallback, fallbackWarning;
+  const other = settings.provider === 'fangxin' ? 'ttapi' : settings.provider === 'ttapi' ? 'fangxin' : null;
+  if (fallbackMode === 'auto' && requested !== 'custom' && other) {
+    const namespace = PROFILES[other].namespace;
+    try {
+      const backupKeys = readKeys(values, namespace);
+      if (backupKeys.length) fallback = { ...namedSettings(other, values), keys: backupKeys, keyNamespace: namespace, model, envFile, env: values };
+    } catch {
+      fallbackWarning = `备用服务 ${other} 配置无效，本次只使用首选服务；请检查 ${namespace}_API_ 配置。`;
+    }
+  }
+  return { keys, model, keyNamespace, envFile, env: values, ...settings, fallbackMode,
+    ...(fallback ? { fallback } : {}), ...(fallbackWarning ? { fallbackWarning } : {}) };
 }
 
 export function requireKeys(config) {

@@ -19,9 +19,9 @@ description: GPT画图。通过用户配置的 OpenAI 兼容图片接口生成�
 - 放心 API：地址 https://fangxinapi.com/v1，默认 Bearer 认证；[获取画图分组 Key](https://fangxinapi.com/keys)，提醒选择支持所选画图模型的分组，以控制台为准。
 - 其他服务：核对服务商文档；默认 Bearer，使用专用密钥请求头时设置 IMAGE_API_AUTH_TYPE=api-key 和 IMAGE_API_KEY_HEADER。不要根据 Key 外观推测认证。
 
-不要把密钥写入源码、命令参数、提示词、结果或公开文档。先给缺少配置的用户清楚的配置步骤和对应服务商链接，不用示例密钥提交请求。明确选择服务商后只读取对应名称的 Key，不回退其他服务商或通用 Key；已有 IMAGE_API_BASE_URL/IMAGE_API_KEY 配对配置及 FANGXIN_MODEL 仍兼容。
+不要把密钥写入源码、命令参数、提示词、结果或公开文档。先给缺少配置的用户清楚的配置步骤和对应服务商链接，不用示例密钥提交请求。所选服务商只读取对应名称的 Key，不混用其他服务商或通用 Key；放心和 TT 已分别配置时可按下方规则切换整份备用服务配置；已有 IMAGE_API_BASE_URL/IMAGE_API_KEY 配对配置及 FANGXIN_MODEL 仍兼容。
 
-shell 同名变量优先于配置文件；文件由 IMAGE_API_ENV_FILE（兼容 FANGXIN_ENV_FILE）选择，默认安装目录 .env。多家 Key 可以同时保存，不根据外观猜归属，不在服务商之间轮换备用 Key。详见 [README](README.md)。
+shell 同名变量优先于配置文件；文件由 IMAGE_API_ENV_FILE（兼容 FANGXIN_ENV_FILE）选择，默认安装目录 .env。多家 Key 可以同时保存，不根据外观猜归属。同一家内部轮换 Key；跨服务备用时使用另一家的完整地址、认证和 Key 配置。详见 [README](README.md)。
 
 ### 帮用户完成首次配置
 
@@ -40,7 +40,7 @@ node <skill-root>/scripts/generate.mjs --prompt "用户提示词" --json --outdi
 node <skill-root>/scripts/generate.mjs --prompt "保留人物，背景换成海边" --image /absolute/reference.png --json
 ```
 
-模型优先级：显式 --model → 对应服务商的 FANGXIN_API_MODEL / TT_API_MODEL / OPENAI_API_MODEL（放心兼容 FANGXIN_MODEL）→ IMAGE_API_MODEL → gpt-image-2.5-flare。不静默替换模型或服务商。改图先查看用户引用图，多图重复 --image；拿不到原图时再请用户补充。
+模型优先级：显式 --model → 对应服务商的 FANGXIN_API_MODEL / TT_API_MODEL / OPENAI_API_MODEL（放心兼容 FANGXIN_MODEL）→ IMAGE_API_MODEL → gpt-image-2.5-flare。不静默替换模型；使用备用服务时说明实际服务商。改图先查看用户引用图，多图重复 --image；拿不到原图时再请用户补充。
 
 TTAPI 编辑使用文档定义的 JSON 图片引用；放心使用重复 image 的 multipart；其他服务默认 multipart image[]。这些上传方式可配置，TTAPI 当前仅文生图通过收费实测，不把编辑协议适配称为实测成功。详细边界见 [兼容性](references/compatibility.md)。
 
@@ -53,9 +53,11 @@ TTAPI 编辑使用文档定义的 JSON 图片引用；放心使用重复 image �
 
 ## 等待与错误
 
-默认单次 420 秒、总网络预算 600 秒、所有密钥合计最多 3 次 API 请求。脚本有统一重试层，等待其返回；用户取消则停止，不另起重复任务。
+默认单次 420 秒、总网络预算 600 秒、所有服务商和密钥合计最多 3 次 API 请求。脚本有统一重试层，等待其返回；用户取消则停止，不另起重复任务。
 
-401 可切换同一配置中的备用 Key；429 遵守 Retry-After；403 和参数错误停止。提交后断线或 5xx 默认不重发，说明执行和扣费状态不确定。只有用户明确接受可能重复提交时才用 --retry-uncertain。
+放心与 TTAPI 的 Key 都已配置时默认双向备用，--doctor 的 fallbackProvider 显示当前备用服务。不改持久默认；单次任务最多切换一次。默认先给首选服务最多 2 次机会，保留至少 1 次给备用；max-attempts=1 时不切换。模型、提示词和参数保持一致，编辑上传按备用服务协议重新构造，不采用另一家配置中的不同默认模型。用户要求“只用某家”时加 --no-fallback；IMAGE_API_FALLBACK=off 可永久关闭。OpenAI 官方和 custom 不参与自动双向备用。
+
+401 先轮换同一家备用 Key；401/402/404、持续 429、明确未提交的连接失败，以及 4xx 中明确 task_failed/upstream_task_failed/image_generation_failed 且不含审核拒绝的信息，可在预算内切换另一家。429 的 Retry-After 约束同一家重试；等待超过 30 秒时可直接尝试另一家。403、审核类拒绝、普通参数错误停止。提交后断线或 5xx 默认不重发、不跨服务切换，说明执行和扣费状态不确定。成功响应异常、图片下载或验收失败也不触发备用。只有用户明确接受可能重复提交时才用 --retry-uncertain，仍不在有历史不确定请求的任务内跨服务重发。读取 provider、initialProvider、failover 和带服务商的 attempts，向用户说明实际出图来源；两家都失败则报告并停止，不手动再启动一轮。
 
 错误中的 status、message、requestId 来自接口响应（message 会脱敏）；PROVIDER_ERROR 等分类、attempts 和本地校验错误由脚本生成。不要把服务商提示解读为已确认的底层根因。
 

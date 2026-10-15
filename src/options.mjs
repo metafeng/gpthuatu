@@ -67,7 +67,7 @@ export function normalizeOptions(v, config) {
   return { prompt, model, size, quality, background, format, compression, moderation,
     n: integer(v.n ?? 1, 1, 10, 'n'), images, mask: v.mask, inputFidelity: v['input-fidelity'],
     user: v.user, maxAttempts, timeout, connectTimeout, totalTimeout, transport,
-    retryUncertain: v['retry-uncertain'] ?? false, strictSize: v['strict-size'] ?? false,
+    retryUncertain: v['retry-uncertain'] ?? false, fallback: !(v['no-fallback'] ?? false), strictSize: v['strict-size'] ?? false,
     outdir: expandPath(v.outdir ?? './outputs/gpthuatu'), json: v.json ?? false, dryRun: v['dry-run'] ?? false };
 }
 
