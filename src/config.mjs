@@ -76,7 +76,7 @@ export function keySetup(config) {
 }
 
 export async function loadConfig(env = process.env, root = ROOT, providerOverride) {
-  const selected = env.IMAGE_API_ENV_FILE?.trim() || env.FANGXIN_ENV_FILE?.trim();
+  const selected = env.IMAGE_API_ENV_FILE?.trim();
   const envFile = path.resolve(selected || path.join(root, '.env'));
   let fileValues = {};
   try { fileValues = parseEnv(await fs.readFile(envFile, 'utf8')); }
@@ -85,11 +85,11 @@ export async function loadConfig(env = process.env, root = ROOT, providerOverrid
   }
   // Explicitly exported empty values override the same variables in the file.
   const values = { ...fileValues, ...env };
-  const requested = (providerOverride ?? values.IMAGE_API_PROVIDER)?.trim().toLowerCase();
+  const requested = providerOverride?.trim().toLowerCase();
   if (requested && ![...Object.keys(PROFILES), 'custom'].includes(requested)) {
     fail('服务商必须为 fangxin、ttapi、openai 或 custom。');
   }
-  let settings, keyNamespace;
+  let settings, keyNamespace, pairedInterface = false;
   if (requested && requested !== 'custom') {
     // Named profiles ignore stale generic settings, including another provider's key/header.
     settings = namedSettings(requested, values);
@@ -98,25 +98,26 @@ export async function loadConfig(env = process.env, root = ROOT, providerOverrid
     if (requested === 'custom' && !values.IMAGE_API_BASE_URL?.trim()) fail('custom 服务商需要填写 IMAGE_API_BASE_URL。');
     settings = providerSettings(values);
     const named = PROFILES[settings.provider]?.namespace;
-    // URL-based legacy profiles remain supported; prefer the matching named key when present.
+    // URL-based configurations prefer the matching named key when present.
     keyNamespace = requested !== 'custom' && named && Object.keys(values).some(name => keyNames(named).test(name)) ? named : 'IMAGE';
-  } else if (Object.keys(values).some(name => keyNames('IMAGE').test(name))) {
-    settings = providerSettings(values); keyNamespace = 'IMAGE';
+    pairedInterface = keyNamespace === 'IMAGE';
+  } else if (readKeys(values, 'IMAGE').length) {
+    fail('通用 IMAGE_API_KEY 需要配对填写 IMAGE_API_BASE_URL；服务商专用 Key 请填写对应名称。');
   } else {
-    const configured = Object.entries(PROFILES).filter(([, profile]) => readKeys(values, profile.namespace).length);
-    if (configured.length > 1) fail('已配置多家服务商，请设置 IMAGE_API_PROVIDER，或使用 --provider fangxin / --provider ttapi / --provider openai 选择。');
-    const provider = configured[0]?.[0] || 'fangxin';
+    // Deterministic priority: Fangxin, TTAPI, then OpenAI. Invalid backup config cannot block the primary.
+    const configured = Object.entries(PROFILES).find(([, profile]) => Object.entries(values)
+      .some(([name, value]) => keyNames(profile.namespace).test(name) && String(value ?? '').trim()));
+    const provider = configured?.[0] || 'fangxin';
     settings = namedSettings(provider, values);
     keyNamespace = PROFILES[provider].namespace;
   }
   const keys = readKeys(values, keyNamespace);
-  const model = (keyNamespace !== 'IMAGE' && values[`${keyNamespace}_API_MODEL`]?.trim())
-    || (keyNamespace === 'FANGXIN' && values.FANGXIN_MODEL?.trim()) || values.IMAGE_API_MODEL?.trim() || DEFAULT_MODEL;
+  const model = values.IMAGE_MODEL?.trim() || DEFAULT_MODEL;
   const fallbackMode = values.IMAGE_API_FALLBACK?.trim() || 'auto';
   if (!['auto', 'off'].includes(fallbackMode)) fail('IMAGE_API_FALLBACK 必须为 auto 或 off。');
   let fallback, fallbackWarning;
   const other = settings.provider === 'fangxin' ? 'ttapi' : settings.provider === 'ttapi' ? 'fangxin' : null;
-  if (fallbackMode === 'auto' && requested !== 'custom' && other) {
+  if (fallbackMode === 'auto' && requested !== 'custom' && !pairedInterface && other) {
     const namespace = PROFILES[other].namespace;
     try {
       const backupKeys = readKeys(values, namespace);

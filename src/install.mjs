@@ -11,141 +11,105 @@ import { loadConfig, keySetup } from './config.mjs';
 
 const SOURCE = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const NAME = 'gpthuatu';
-const LEGACY_NAMES = ['fangxin-image-gen', 'fangxin-draw'];
 const FILES = ['SKILL.md', 'README.md', 'agents', 'scripts', 'src', 'vendor', 'references', 'tests',
   'package.json', 'package-lock.json', '.github', '.gitignore', '.env.example'];
-async function stat(file) { try { return await fs.lstat(file); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } }
-async function owned(file) {
-  const info = await stat(file);
-  if (!info) return true;
-  try {
-    const text = await fs.readFile(path.join(file, 'SKILL.md'), 'utf8');
-    return /^name:\s*["']?(gpthuatu|fangxin-image-gen|fangxin-draw|放心画图|GPT画图)["']?\s*$/m.test(text);
-  } catch { return false; }
+async function stat(file) { try { return await fs.lstat(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } }
+async function owned(folder) {
+  try { return /^name:\s*["']?gpthuatu["']?\s*$/m.test(await fs.readFile(path.join(folder, 'SKILL.md'), 'utf8')); }
+  catch { return false; }
 }
-async function exists(file) { return !!(await stat(file)); }
-async function makePrivate(file, directory = false) {
-  if (process.platform !== 'win32') return fs.chmod(file, directory ? 0o700 : 0o600);
+async function pointsTo(link, target) {
+  try { return await fs.realpath(link) === await fs.realpath(target); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return path.resolve(path.dirname(link), await fs.readlink(link)) === target;
+  }
+}
+async function makePrivate(file) {
+  if (process.platform !== 'win32') return fs.chmod(file, 0o600);
   const account = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${os.userInfo().username}` : os.userInfo().username;
-  try {
-    await promisify(execFile)('icacls', [file, '/inheritance:r', '/grant:r', `${account}:${directory ? '(OI)(CI)F' : 'F'}`], { timeout: 10000, windowsHide: true });
-  } catch { throw new Error('无法设置私有配置/备份的访问权限，已停止安装。'); }
+  try { await promisify(execFile)('icacls', [file, '/inheritance:r', '/grant:r', `${account}:F`], { timeout: 10000, windowsHide: true }); }
+  catch { throw new Error('无法限制私有配置文件的访问权限，已停止安装。'); }
 }
 
-export async function install({ source = SOURCE, home = os.homedir(), agents = ['codex', 'claude'], target,
-  dryRun = false, replaceHomeSource = false } = {}) {
-  source = path.resolve(source); home = path.resolve(home);
+export async function install({ source = SOURCE, home = os.homedir(), agents = ['codex', 'claude'], target, dryRun = false } = {}) {
+  source = await fs.realpath(path.resolve(source)); home = path.resolve(home);
   agents = [...new Set(agents)];
+  if (!agents.every(name => ['codex', 'claude'].includes(name))) throw new Error('agents 只能为 codex、claude；其他工具使用 --target 指定安装目录。');
   const canonical = path.resolve(target || path.join(home, '.agents', 'skills', NAME));
-  if (!agents.every(x => ['codex', 'claude'].includes(x))) throw new Error('agents 只能为 codex、claude；其他 Agent 使用 --target 指定安装目录。');
-  const legacyRoots = LEGACY_NAMES.map(name => path.join(home, '.agents', 'skills', name));
-  const nested = path.join(home, '.agents', 'skills', 'baoyu-danger-gemini-web', 'fangxin-image-gen');
-  const aliases = agents.flatMap(agent => [...LEGACY_NAMES, NAME].map(name => path.join(home, `.${agent}`, 'skills', name)));
-  const candidates = [...new Set([canonical, ...legacyRoots, nested, ...aliases])];
-  const removals = [];
-  const seenEntries = new Set();
-  for (const file of candidates) {
-    const info = await stat(file);
-    if (!info) continue;
-    const entry = path.join(await fs.realpath(path.dirname(file)), path.basename(file));
-    if (seenEntries.has(entry)) continue;
-    seenEntries.add(entry);
-    // A dangling known alias is safe to back up, but arbitrary directories are never removed.
-    if (!await owned(file)) {
-      if (!(info.isSymbolicLink() && [...LEGACY_NAMES, NAME].includes(path.basename(file)))) throw new Error(`安装目录中已有其他内容，停止替换：${file}`);
-      const link = await fs.readlink(file);
-      if (!/(?:gpthuatu|fangxin-(?:image-gen|draw))/.test(link)) throw new Error(`无法确认旧链接归属，停止替换：${file}`);
-    }
-    if (file === source && file === canonical && !replaceHomeSource) continue;
-    removals.push({ path: file, symlink: info.isSymbolicLink() });
+  const existing = await stat(canonical);
+  if (existing && (!existing.isDirectory() || !await owned(canonical))) throw new Error(`安装位置已有其他内容，请选择空目录：${canonical}`);
+  const links = agents.map(name => path.join(home, `.${name}`, 'skills', NAME)).filter(link => link !== canonical);
+  const pendingLinks = [];
+  for (const link of links) {
+    const info = await stat(link);
+    if (!info) pendingLinks.push(link);
+    else if (!info.isSymbolicLink() || !await pointsTo(link, canonical)) throw new Error(`工具入口已被其他内容占用：${link}`);
   }
-  // Prefer the configuration from the existing canonical installation, then from its source.
-  const envCandidates = [...new Set([path.join(canonical, '.env'), ...legacyRoots.map(root => path.join(root, '.env')), path.join(source, '.env'),
-    ...aliases.map(x => path.join(x, '.env')), path.join(nested, '.env')])];
-  let envBytes, envOrigin;
-  for (const file of envCandidates) {
-    try { envBytes = await fs.readFile(file); envOrigin = file; break; } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  }
-  // Legacy embedded keys are migrated into a private config file, never into the new source code.
-  if (!envBytes) for (const root of [canonical, ...legacyRoots, nested, source]) {
-    try {
-      const legacy = await fs.readFile(path.join(root, 'scripts', 'generate.py'), 'utf8');
-      const match = legacy.match(/DEFAULT_API_KEY\s*=\s*["']([^"'\r\n]+)["']/);
-      if (match?.[1] && /^sk-/.test(match[1])) { envBytes = Buffer.from(`FANGXIN_API_KEY=${match[1]}\n`); envOrigin = 'legacy-script'; break; }
-    } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  }
-  if (envBytes) {
-    // Validate before moving anything, then preserve the user's configuration verbatim.
-    parseEnv(envBytes.toString('utf8'));
-  }
-  const backupRoot = path.join(home, '.agents', 'skill-backups', `gpthuatu-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`);
-  const plan = { success: true, dryRun, canonical, agents, backups: removals.map(x => x.path),
-    configPreserved: !!envBytes, configOrigin: envOrigin === 'legacy-script' ? 'legacy-script' : envOrigin ? 'existing-config' : 'none',
-    backupRoot: removals.length ? backupRoot : null };
+  // Private configuration belongs to the destination; never import source credentials.
+  let envBytes;
+  try { envBytes = await fs.readFile(path.join(canonical, '.env')); parseEnv(envBytes.toString('utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const plan = { success: true, dryRun, canonical, agents, existingInstallation: !!existing,
+    configPreserved: envBytes !== undefined };
   if (dryRun) return plan;
 
   const parent = path.dirname(canonical);
+  const stage = path.join(parent, `.gpthuatu-stage-${randomUUID()}`);
+  const previous = path.join(parent, `.gpthuatu-replace-${randomUUID()}`);
+  const linksCreated = [];
+  let installed = false, moved = false, committed = false;
   await fs.mkdir(parent, { recursive: true });
-  const staged = path.join(parent, `.gpthuatu-stage-${randomUUID()}`);
-  await fs.mkdir(staged, { mode: 0o700 });
-  const moved = [], linksCreated = [];
-  let installed = false;
   try {
-    // Stage completely before moving any directory, including when running from the old directory.
-    for (const item of FILES) await fs.cp(path.join(source, item), path.join(staged, item), { recursive: true, dereference: true });
-    const git = await stat(path.join(source, '.git'));
-    // Normal clones retain Git updates; worktree pointer files are deliberately not copied.
-    if (git?.isDirectory()) {
-      const gitConfig = await fs.readFile(path.join(source, '.git', 'config'), 'utf8');
-      if (!/^\s*worktree\s*=/m.test(gitConfig)) await fs.cp(path.join(source, '.git'), path.join(staged, '.git'), { recursive: true });
-    }
-    if (envBytes) await fs.writeFile(path.join(staged, '.env'), envBytes, { mode: 0o600 });
-    if (envBytes) await makePrivate(path.join(staged, '.env'));
-    if (removals.length) {
-      await fs.mkdir(backupRoot, { recursive: true, mode: 0o700 });
-      await makePrivate(backupRoot, true);
-      // Symlinks are moved first so their targets remain available during backup planning.
-      removals.sort((a, b) => Number(b.symlink) - Number(a.symlink));
-      for (const [index, item] of removals.entries()) {
-        const backup = path.join(backupRoot, `${index + 1}-${path.basename(item.path)}`);
-        await fs.rename(item.path, backup);
-        moved.push({ original: item.path, backup, symlink: item.symlink });
+    if (source !== canonical) {
+      await fs.mkdir(stage, { mode: 0o700 });
+      for (const file of FILES) await fs.cp(path.join(source, file), path.join(stage, file), { recursive: true, dereference: true });
+      // Keep the destination's generated images and personal files when refreshing managed code.
+      if (existing) for (const name of await fs.readdir(canonical)) {
+        if (!FILES.includes(name) && name !== '.env' && name !== '.git') {
+          await fs.cp(path.join(canonical, name), path.join(stage, name), { recursive: true });
+        }
       }
-    }
-    if (source === canonical && !replaceHomeSource) {
-      // The checked-out skill can update itself without losing its Git metadata.
-      await fs.rm(staged, { recursive: true, force: true });
-      if (envBytes) await fs.writeFile(path.join(canonical, '.env'), envBytes, { mode: 0o600 });
-      if (await exists(path.join(canonical, '.env'))) await makePrivate(path.join(canonical, '.env'));
-    } else {
-      await fs.rename(staged, canonical);
-      installed = true;
-    }
-    for (const agent of agents) {
-      const link = path.join(home, `.${agent}`, 'skills', NAME);
-      if (link === canonical) continue;
+      const git = await stat(path.join(source, '.git'));
+      if (git?.isDirectory()) {
+        const config = await fs.readFile(path.join(source, '.git', 'config'), 'utf8');
+        if (!/^\s*worktree\s*=/m.test(config)) await fs.cp(path.join(source, '.git'), path.join(stage, '.git'), { recursive: true });
+      } else if (existing && (await stat(path.join(canonical, '.git')))?.isDirectory()) {
+        await fs.cp(path.join(canonical, '.git'), path.join(stage, '.git'), { recursive: true });
+      }
+      if (envBytes !== undefined) {
+        await fs.writeFile(path.join(stage, '.env'), envBytes, { mode: 0o600 });
+        await makePrivate(path.join(stage, '.env'));
+      }
+      if (existing) { await fs.rename(canonical, previous); moved = true; }
+      await fs.rename(stage, canonical); installed = true;
+    } else if (envBytes !== undefined) await makePrivate(path.join(canonical, '.env'));
+    for (const link of pendingLinks) {
       await fs.mkdir(path.dirname(link), { recursive: true });
-      if (await exists(link) && await fs.realpath(link) === await fs.realpath(canonical)) continue;
       await fs.symlink(canonical, link, process.platform === 'win32' ? 'junction' : 'dir');
       linksCreated.push(link);
     }
-    if (moved.length) await fs.writeFile(path.join(backupRoot, 'restore.json'), JSON.stringify({ canonical, moved, linksCreated }, null, 2), { mode: 0o600 });
     const config = await loadConfig(process.env, canonical);
+    committed = true;
     return { ...plan, installed: true, restartAgent: true,
       ...(!config.keys.length ? { keySetup: keySetup(config) } : {}) };
   } catch (error) {
     for (const link of linksCreated.reverse()) await fs.rm(link, { force: true });
     if (installed) await fs.rm(canonical, { recursive: true, force: true });
-    for (const item of moved.reverse()) { await fs.mkdir(path.dirname(item.original), { recursive: true }); await fs.rename(item.backup, item.original); }
+    if (moved) await fs.rename(previous, canonical);
     throw error;
-  } finally { await fs.rm(staged, { recursive: true, force: true }); }
+  } finally {
+    await fs.rm(stage, { recursive: true, force: true });
+    if (committed && moved) await fs.rm(previous, { recursive: true, force: true });
+  }
 }
 
 export async function main() {
   try {
     const { values } = parseArgs({ options: { agents: { type: 'string' }, target: { type: 'string' }, home: { type: 'string' },
       'dry-run': { type: 'boolean' }, help: { type: 'boolean' } } });
-    if (values.help) { console.log('node scripts/install.mjs [--agents codex,claude] [--target /path/to/skills/gpthuatu] [--dry-run]\n自动备份旧版、保留配置，并安装GPT画图。备份位于 ~/.agents/skill-backups/，不进入技能扫描目录。'); return; }
-    console.log(JSON.stringify(await install({ home: values.home, target: values.target, agents: values.agents !== undefined ? values.agents.split(',').filter(Boolean) : ['codex', 'claude'], dryRun: values['dry-run'] }), null, 2));
+    if (values.help) { console.log('node scripts/install.mjs [--agents codex,claude] [--target /path/to/skills/gpthuatu] [--dry-run]\n安装 GPT画图并建立工具入口；已有 gpthuatu 的私有配置会保留。'); return; }
+    console.log(JSON.stringify(await install({ home: values.home, target: values.target,
+      agents: values.agents !== undefined ? values.agents.split(',').filter(Boolean) : ['codex', 'claude'], dryRun: values['dry-run'] }), null, 2));
   } catch (error) { console.error(`安装失败：${error.message}`); process.exitCode = 1; }
 }

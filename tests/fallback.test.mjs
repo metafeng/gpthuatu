@@ -9,23 +9,23 @@ import { normalizeOptions } from '../src/options.mjs';
 import { generate } from '../src/generate.mjs';
 import { safeError } from '../src/errors.mjs';
 
-const env = { IMAGE_API_PROVIDER:'fangxin', FANGXIN_API_KEY:'fixture-fangxin', TT_API_KEY:'fixture-tt' };
+const env = { FANGXIN_API_KEY:'fixture-fangxin', TT_API_KEY:'fixture-tt' };
 function png() {
   const image = new codecs.PNG({width:4,height:4}); image.data.fill(255);
   return codecs.PNG.sync.write(image);
 }
 const reply = (status=200, body={data:[{b64_json:png().toString('base64')}]}, headers={}) =>
   ({status, body:Buffer.from(JSON.stringify(body)), headers});
-async function setup(t, values={}, flags={}) {
+async function setup(t, values={}, flags={}, provider) {
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'gpthuatu-fallback-'));
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
-  const config=await loadConfig({...env,...values},root);
+  const config=await loadConfig({...env,...values},root,provider);
   return {root,config,options:normalizeOptions({prompt:'fixture scene',outdir:root,...flags},config)};
 }
 
 test('both directions fall back after persistent throttling with one global three-request budget', async t => {
   for (const primary of ['fangxin','ttapi']) {
-    const {root,config,options}=await setup(t,{IMAGE_API_PROVIDER:primary});
+    const {root,config,options}=await setup(t,{}, {},primary);
     const backup=primary==='fangxin'?'ttapi':'fangxin';
     let calls=0;
     const result=await generate(options,config,{request:async(url,request)=>{
@@ -45,7 +45,7 @@ test('both directions fall back after persistent throttling with one global thre
     const saved=await fs.readFile(result.manifest,'utf8');
     assert.ok(!saved.includes('fixture-fangxin')&&!saved.includes('fixture-tt'));
     assert.equal(JSON.parse(saved).provider,backup);
-    assert.equal((await loadConfig({...env,IMAGE_API_PROVIDER:primary},root)).provider,primary);
+    assert.equal((await loadConfig(env,root,primary)).provider,primary);
   }
 });
 
@@ -126,7 +126,7 @@ test('disabled, missing backup and one-attempt requests remain on the primary', 
 
 test('editing rebuilds the provider-specific upload while keeping identical requested fields', async t => {
   for(const primary of ['fangxin','ttapi']) {
-    const {root,config}=await setup(t,{IMAGE_API_PROVIDER:primary,TT_API_MODEL:'gpt-image-2'});
+    const {root,config}=await setup(t,{IMAGE_MODEL:'gpt-image-2'}, {},primary);
     const file=path.join(root,'reference.png');await fs.writeFile(file,png());
     const options=normalizeOptions({prompt:'keep scene',image:[file],outdir:root},config);let calls=0;
     const result=await generate(options,config,{request:async(url,request)=>{
@@ -164,8 +164,8 @@ test('fallback configuration is mutual, opt-out, and limited to the two named pr
   assert.equal(config.fallback.provider,'ttapi');
   assert.equal((await loadConfig(env,root,'ttapi')).fallback.provider,'fangxin');
   assert.equal((await loadConfig({...env,IMAGE_API_FALLBACK:'off'},root)).fallback,undefined);
-  assert.equal((await loadConfig({...env,IMAGE_API_PROVIDER:'openai',OPENAI_API_KEY:'fixture-official'},root)).fallback,undefined);
-  assert.equal((await loadConfig({...env,IMAGE_API_PROVIDER:'custom',IMAGE_API_BASE_URL:'https://fangxinapi.com/v1',IMAGE_API_KEY:'fixture-custom'},root)).fallback,undefined);
+  assert.equal((await loadConfig({...env,OPENAI_API_KEY:'fixture-official'},root,'openai')).fallback,undefined);
+  assert.equal((await loadConfig({...env,IMAGE_API_BASE_URL:'https://fangxinapi.com/v1',IMAGE_API_KEY:'fixture-custom'},root,'custom')).fallback,undefined);
 });
 
 test('an earlier ambiguous attempt prevents cross-provider replay even when a later retry is rejected', async t => {

@@ -44,12 +44,12 @@ test('reject invalid inputs and format conflicts before any request', () => {
 
 test('dotenv precedence, numeric backup order and missing explicit config', async t => {
   const root = await temp(t);
-  await fs.writeFile(path.join(root, '.env'), 'FANGXIN_API_KEY="file-key"\nFANGXIN_API_KEY10=ten\nFANGXIN_API_KEY2=two\nFANGXIN_MODEL=\n');
+  await fs.writeFile(path.join(root, '.env'), 'FANGXIN_API_KEY="file-key"\nFANGXIN_API_KEY10=ten\nFANGXIN_API_KEY2=two\nIMAGE_MODEL=\n');
   const loaded = await loadConfig({ FANGXIN_API_KEY: 'shell-key' }, root);
   assert.deepEqual(loaded.keys, ['shell-key', 'two', 'ten']);
   assert.equal(loaded.model, 'gpt-image-2.5-flare');
   assert.deepEqual((await loadConfig({ FANGXIN_API_KEY: '' }, root)).keys, ['two', 'ten']);
-  await assert.rejects(loadConfig({ FANGXIN_ENV_FILE: path.join(root, 'missing') }, root), { code: 'CONFIG_ERROR' });
+  await assert.rejects(loadConfig({ IMAGE_API_ENV_FILE: path.join(root, 'missing') }, root), { code: 'CONFIG_ERROR' });
 });
 
 test('full image decode: PNG alpha/CRC/truncation, JPEG and invalid Base64', () => {
@@ -240,14 +240,14 @@ test('proxy bypass works for exact, suffix, port and IPv6 host rules', () => {
   assert.throws(() => proxyFor(new URL('https://example.com'), { HTTPS_PROXY: 'socks5://proxy:1080' }), { code: 'CONFIG_ERROR' });
 });
 
-test('generic provider configuration normalizes URLs and isolates legacy credentials', async t => {
+test('generic provider configuration normalizes URLs and isolates other provider credentials', async t => {
   const root = await temp(t);
-  await fs.writeFile(path.join(root, '.env'), 'FANGXIN_API_KEY=old-service-key\nFANGXIN_MODEL=gpt-image-1\n');
+  await fs.writeFile(path.join(root, '.env'), 'FANGXIN_API_KEY=old-service-key\nIMAGE_MODEL=gpt-image-1\n');
   const changed = await loadConfig({ IMAGE_API_BASE_URL:'https://api.ttapi.io/v1/images/generations' },root);
   assert.equal(changed.apiBaseUrl,'https://api.ttapi.io/v1');
   assert.equal(changed.authType,'api-key');
   assert.equal(changed.apiKeyHeader,'TT-API-KEY');
-  assert.equal(changed.model,'gpt-image-2.5-flare');
+  assert.equal(changed.model,'gpt-image-1');
   assert.deepEqual(changed.keys,[]);
   const generic = await loadConfig({ IMAGE_API_BASE_URL:'https://example.com/custom/v1/',
     IMAGE_API_KEY:'new-service-key', IMAGE_API_KEY10:'ten', IMAGE_API_KEY2:'two' },root);
@@ -314,13 +314,13 @@ test('editing follows JSON references for TTAPI and multipart image[] for other 
 test('named providers pair only their own keys, endpoint, auth and model across switches', async t => {
   const dir = await temp(t);
   await fs.writeFile(path.join(dir, '.env'), [
-    'IMAGE_API_PROVIDER=fangxin', 'FANGXIN_API_KEY=fixture-fangxin', 'TT_API_KEY=fixture-tt',
-    'TT_API_KEY10=tt-ten', 'TT_API_KEY2=tt-two', 'TT_API_MODEL=gpt-image-2',
+    'FANGXIN_API_KEY=fixture-fangxin', 'TT_API_KEY=fixture-tt',
+    'TT_API_KEY10=tt-ten', 'TT_API_KEY2=tt-two', 'IMAGE_MODEL=gpt-image-2',
     // Stale custom settings must not affect a named profile.
     'IMAGE_API_BASE_URL=https://wrong.example/v1', 'IMAGE_API_KEY=fixture-other',
     'IMAGE_API_AUTH_TYPE=api-key', 'IMAGE_API_KEY_HEADER=X-Wrong', 'IMAGE_API_EDIT_FORMAT=multipart',
   ].join('\n'));
-  const fangxin = await loadConfig({}, dir), tt = await loadConfig({}, dir, 'ttapi');
+  const fangxin = await loadConfig({}, dir, 'fangxin'), tt = await loadConfig({}, dir, 'ttapi');
   assert.deepEqual(fangxin.keys, ['fixture-fangxin']);
   assert.equal(fangxin.authType, 'bearer');
   assert.equal(keySetup(fangxin).variable, 'FANGXIN_API_KEY');
@@ -340,33 +340,37 @@ test('named providers pair only their own keys, endpoint, auth and model across 
       return response();
     }});
   }
-  assert.equal((await loadConfig({}, dir)).provider, 'fangxin'); // One-call override is not persistent.
+  assert.equal((await loadConfig({}, dir)).provider, 'openai-compatible'); // One-call override is not persistent.
 });
 
 test('missing named key stops without falling back to another or generic provider key', async t => {
   const dir = await temp(t);
-  const selected = await loadConfig({IMAGE_API_PROVIDER:'ttapi', FANGXIN_API_KEY:'fixture-fangxin', IMAGE_API_KEY:'fixture-other'}, dir);
+  const selected = await loadConfig({FANGXIN_API_KEY:'fixture-fangxin', IMAGE_API_KEY:'fixture-other'}, dir, 'ttapi');
   assert.deepEqual(selected.keys, []);
   assert.throws(() => requireKeys(selected), error => error.code === 'CONFIG_ERROR' && error.message.includes('TT_API_KEY'));
   let requests = 0;
   await assert.rejects(generate(options({outdir:dir}), selected, {request:async () => { requests++; return response(); }}), {code:'CONFIG_ERROR'});
   assert.equal(requests, 0);
-  await assert.rejects(loadConfig({IMAGE_API_PROVIDER:'ttapi', TT_API_BASE_URL:'https://fangxinapi.com/v1', TT_API_KEY:'fixture-tt'}, dir), {code:'CONFIG_ERROR'});
-  await assert.rejects(loadConfig({IMAGE_API_PROVIDER:'custom', TT_API_KEY:'fixture-tt'}, dir), {code:'CONFIG_ERROR'});
+  await assert.rejects(loadConfig({TT_API_BASE_URL:'https://fangxinapi.com/v1', TT_API_KEY:'fixture-tt'}, dir, 'ttapi'), {code:'CONFIG_ERROR'});
+  await assert.rejects(loadConfig({TT_API_KEY:'fixture-tt'}, dir, 'custom'), {code:'CONFIG_ERROR'});
 });
 
-test('provider selection detects one named key, rejects ambiguity, and preserves generic compatibility', async t => {
+test('provider selection follows fixed priority and uses one shared model', async t => {
   const dir = await temp(t);
   const tt = await loadConfig({TT_API_KEY:'fixture-tt'}, dir);
   assert.equal(tt.provider, 'ttapi');
   assert.deepEqual(tt.keys, ['fixture-tt']);
-  await assert.rejects(loadConfig({TT_API_KEY:'fixture-tt', FANGXIN_API_KEY:'fixture-fangxin'}, dir), {code:'CONFIG_ERROR'});
-  const official = await loadConfig({IMAGE_API_PROVIDER:'openai', OPENAI_API_KEY:'fixture-official'}, dir);
+  const both = await loadConfig({TT_API_KEY:'fixture-tt', FANGXIN_API_KEY:'fixture-fangxin', IMAGE_MODEL:'gpt-image-2'}, dir);
+  assert.equal(both.provider,'fangxin');
+  assert.equal(both.model,'gpt-image-2');
+  assert.equal((await loadConfig({TT_API_KEY:'fixture-tt', FANGXIN_API_KEY:'fixture-fangxin', IMAGE_MODEL:'gpt-image-2'}, dir,'ttapi')).model,'gpt-image-2');
+  await assert.rejects(loadConfig({IMAGE_API_KEY:'fixture-no-url'}, dir), {code:'CONFIG_ERROR'});
+  const official = await loadConfig({OPENAI_API_KEY:'fixture-official'}, dir);
   assert.equal(official.apiBaseUrl, 'https://api.openai.com/v1');
   assert.deepEqual(official.keys, ['fixture-official']);
   const urlSelected = await loadConfig({IMAGE_API_BASE_URL:'https://api.ttapi.io/v1', TT_API_KEY:'fixture-tt', FANGXIN_API_KEY:'fixture-fangxin'}, dir);
   assert.deepEqual(urlSelected.keys, ['fixture-tt']);
-  const custom = await loadConfig({IMAGE_API_PROVIDER:'custom', IMAGE_API_BASE_URL:'https://example.com/v1', IMAGE_API_KEY:'fixture-custom', TT_API_KEY:'fixture-tt'}, dir);
+  const custom = await loadConfig({IMAGE_API_BASE_URL:'https://example.com/v1', IMAGE_API_KEY:'fixture-custom', TT_API_KEY:'fixture-tt'}, dir, 'custom');
   assert.deepEqual(custom.keys, ['fixture-custom']);
   assert.equal(custom.provider, 'openai-compatible');
 });
